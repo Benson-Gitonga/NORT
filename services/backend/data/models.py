@@ -67,3 +67,40 @@ class Trade(SQLModel, table=True):
     
     user: User = Relationship(back_populates="trades")
     market: Market = Relationship(back_populates="trades")
+
+class PaperTrade(SQLModel, table=True):
+    """Stores all paper trades. No real money is ever moved."""
+    __tablename__ = "paper_trades"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    market_id: str
+    market_question: str
+    outcome: str                    # "YES" or "NO"
+    shares: float
+    price_per_share: float          # e.g. 0.65 (65 cents on the dollar)
+    total_cost: float               # shares * price_per_share
+    direction: str                  # "BUY" or "SELL"
+    status: str = Field(default="OPEN")  # OPEN | CLOSED | CANCELLED
+    tx_hash: Optional[str] = None   # Polygon testnet receipt (optional)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    closed_at: Optional[datetime] = None
+    pnl: Optional[float] = None     # Filled when trade is closed
+
+
+class WalletConfig(SQLModel, table=True):
+    """Stores per-user paper wallet balances and settings."""
+    __tablename__ = "wallet_config"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True, unique=True)
+    paper_balance: float = Field(default=1000.0)  # Start with $1,000 paper money
+    total_deposited: float = Field(default=1000.0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+
+
+
+
