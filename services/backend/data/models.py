@@ -19,11 +19,17 @@ class Market(SQLModel, table=True):
     question: str
     category: str 
     current_odds: float
+    previous_odds: float = Field(default=0.5)
+    volume: float = Field(default=0.0)
+    avg_volume: float = Field(default=0.0)
     is_active: bool = Field(default=True)
     expires_at: datetime 
     
     signals: List["AISignal"] = Relationship(back_populates="market")
     trades: List["Trade"] = Relationship(back_populates="market")
+    previous_odds: float = Field(default=0.5)
+volume: float = Field(default=0.0)
+avg_volume: float = Field(default=0.0)
 
 # 3. AISignal Table
 class AISignal(SQLModel, table=True):
