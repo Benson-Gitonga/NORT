@@ -11,7 +11,7 @@ from typing import List, Dict
 # Tune these thresholds as you test
 # ─────────────────────────────────────────────
 
-MIN_LIQUIDITY = 1000.0      # Markets below this are too thin to trade
+MIN_LIQUIDITY = 100.0       # Minimum 24hr volume to be worth ranking
 MOMENTUM_WEIGHT = 0.5       # How much price movement matters in final score
 VOLUME_WEIGHT = 0.5         # How much volume spike matters in final score
 
