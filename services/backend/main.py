@@ -7,6 +7,7 @@ from services.backend.api.wallet import router as wallet_router
 from services.backend.api.trades import router as trades_router
 from services.backend.api.markets import router as markets_router
 from services.backend.data.database import init_db
+from services.backend.api.advice import router as advice_router
 
 
 @asynccontextmanager
@@ -33,6 +34,8 @@ app.include_router(trades_router, prefix="/api")
 
 app.include_router(markets_router)
 
+app.include_router(signals_router)
+app.include_router(advice_router)
 
 @app.get("/")
 def root():
