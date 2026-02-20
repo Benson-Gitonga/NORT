@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from services.backend.api.signals import router as signals_router
 from services.backend.api.markets import router as markets_router
 from services.backend.data.database import init_db
+from services.backend.api.advice import router as advice_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -15,6 +16,7 @@ app = FastAPI(title="Polymarket AI Assistant", lifespan=lifespan)
 
 app.include_router(markets_router)
 app.include_router(signals_router)
+app.include_router(advice_router)
 
 @app.get("/")
 def root():
