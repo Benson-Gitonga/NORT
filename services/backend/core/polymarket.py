@@ -65,21 +65,23 @@ def parse_market(item: Dict) -> Dict:
 
     volume24hr = float(item.get("volume24hr", 0) or 0)
     volume1wk  = float(item.get("volume1wk", 0) or 0)
-    liquidity  = float(item.get("liquidityNum", 0) or item.get("liquidity", 0) or 0)
 
-    # avg_volume = daily average over the past week
-    # If 1wk volume exists, divide by 7 to get daily baseline
-    avg_volume = (volume1wk / 7) if volume1wk > 0 else max(volume24hr * 0.5, 1)
+    # Daily average = weekly volume divided by 7
+    # If no weekly data, use 24hr volume as baseline
+    avg_volume = (volume1wk / 7) if volume1wk > 0 else volume24hr
+
+    # Avoid division by zero in signals engine
+    if avg_volume == 0:
+        avg_volume = 1.0
 
     return {
         "id":            item.get("id", ""),
         "question":      item.get("question", "Unknown"),
         "category":      item.get("category", "general"),
         "current_odds":  current_odds,
-        "previous_odds": current_odds,   # first fetch — updates on next sync
-        "volume":        volume24hr,     # use 24hr volume for spike detection
-        "avg_volume":    avg_volume,     # daily average from weekly data
-        "liquidity":     liquidity,
+        "previous_odds": current_odds,
+        "volume":        volume24hr,
+        "avg_volume":    avg_volume,
         "is_active":     item.get("active", True),
         "expires_at":    expires_at,
     }

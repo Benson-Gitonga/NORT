@@ -102,7 +102,7 @@ const getStoredWallet = () => {
 
 export async function getSignals(filter = 'all') {
   try {
-    const res = await fetch(`${BASE}/api/signals?top=20`);
+    const res = await fetch(`${BASE}/signals/?top=20`);
     const data = await res.json();
     const signals = (data.signals || []).map(s => {
       const heatPct = Math.max(0, Math.min(100, Math.round((s.score || 0) * 100)));
