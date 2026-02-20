@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useTelegram } from "./useTelegram";
 
@@ -23,28 +23,44 @@ export function useRealAuth() {
     setInitialized(true);
   }, []);
 
-  const walletAddress = forceLoggedOut ? null : (wallets?.[0]?.address || lsWallet || null);
+  // Clear session on tab close / page hide
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleUnload = () => {
+      try {
+        window.localStorage.removeItem("walletAddress");
+        window.localStorage.removeItem("nort_auth");
+      } catch {}
+    };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, []);
 
+  const walletAddress = forceLoggedOut ? null : (wallets?.[0]?.address || lsWallet || null);
   const isAuthed = !!privyReady && initialized && !forceLoggedOut && (!!authenticated || !!walletAddress);
 
   const logout = async () => {
     console.log("[Auth] logout called");
+    // Clear local storage first
     try {
       if (typeof window !== "undefined") {
         localStorage.removeItem("walletAddress");
         localStorage.removeItem("nort_auth");
-        localStorage.setItem("force_logout", "true");
-        console.log("[Auth] localStorage cleared");
       }
     } catch(e) {
-      console.log("[Auth] localStorage error:", e);
+      console.warn("[Auth] localStorage error:", e);
     }
+    // Await Privy logout before redirecting
     try {
       await privyLogout();
+      console.log("[Auth] privyLogout complete");
     } catch(e) {
-      console.log("[Auth] privyLogout error:", e);
+      console.warn("[Auth] privyLogout error:", e);
     }
-    window.location.replace(window.location.origin + "/?t=" + Date.now());
+    // Hard redirect after logout is confirmed
+    if (typeof window !== "undefined") {
+      window.location.replace(window.location.origin + "/");
+    }
   };
 
   return {

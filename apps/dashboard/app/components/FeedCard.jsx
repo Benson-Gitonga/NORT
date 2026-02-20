@@ -62,7 +62,7 @@ export default function FeedCard({ data, index, onTrade, onChat }) {
             </div>
           ) : (
             <div className="advice-lock" style={{ borderTop: 'none', padding: '0 12px 10px' }}>
-              <button className="lock-btn" style={{ background: 'var(--g1)', color: 'var(--g4)', border: '1px solid var(--g2)' }} onClick={handleChat}>
+              <button className="chip-btn" style={{ width: '100%' }} onClick={handleChat}>
                 Chat OpenClaw →
               </button>
             </div>

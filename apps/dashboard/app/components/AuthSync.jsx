@@ -18,15 +18,18 @@ export default function AuthSync() {
 
     const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     // Register wallet and initialize paper balance if needed.
+    // We use wallet_address as telegram_id for dashboard users (no real Telegram ID).
     fetch(`${BASE}/api/wallet/connect`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         wallet_address: walletAddress,
-        telegram_id: walletAddress,
+        telegram_id: walletAddress.toLowerCase(),
       }),
-    }).catch(() => {
-      // Silent — UI can still operate with cached state
+    }).then(r => r.json()).then(d => {
+      console.log("[AuthSync] wallet connected:", d);
+    }).catch((e) => {
+      console.warn("[AuthSync] wallet connect failed:", e);
     });
   }, [isAuthed, walletAddress]);
 

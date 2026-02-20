@@ -117,16 +117,12 @@ def get_wallet_summary(
     Used by: GET /wallet/summary, OpenClaw skill, Telegram /portfolio
     """
     if wallet_address and not telegram_user_id:
+        wallet_address = wallet_address.lower()
         user = get_user_by_wallet(wallet_address, session)
         if not user:
             raise ValueError(f"Wallet {wallet_address} not found. Connect it first.")
-        if not user.telegram_id:
-            raise ValueError(
-                f"Wallet {wallet_address} has no linked Telegram ID yet. "
-                "Link your Telegram account to see your paper balance."
-            )
-        telegram_user_id = user.telegram_id
-        wallet_address = user.wallet_address
+        # Use telegram_id if linked, otherwise fall back to wallet_address as the config key
+        telegram_user_id = user.telegram_id or wallet_address
     elif telegram_user_id and not wallet_address:
         user = get_user_by_telegram(telegram_user_id, session)
         wallet_address = user.wallet_address if user else None

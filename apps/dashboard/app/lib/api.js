@@ -245,7 +245,7 @@ export async function paperTrade({ marketId, side, amount, price }) {
       question = m?.q || '';
     } catch {}
     const body = {
-      telegram_user_id: wallet || 'dev_user',
+      telegram_user_id: (wallet || 'dev_user').toLowerCase(),
       market_id: String(marketId),
       market_question: question || `Market ${marketId}`,
       outcome: (side || '').toUpperCase() === 'NO' ? 'NO' : 'YES',

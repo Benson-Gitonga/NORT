@@ -9,7 +9,7 @@ export default function RootLayout({ children }) {
         <Script src="https://telegram.org/js/telegram-web-app.js" strategy="afterInteractive" />
         <Providers>
           <AuthSync />
-          <main className="min-h-screen max-w-md mx-auto">{children}</main>
+          {children}
         </Providers>
       </body>
     </html>
