@@ -417,9 +417,64 @@ export const ACHIEVEMENTS_DATA = [
 
 // Intern 1/5: replace with → fetch(`${BASE}/api/leaderboard`)
 export async function getLeaderboard(type = 'pts') {
-  await sim(400);
-  const data = LB_DATA[type];
-  return data || LB_DATA.pts;
+  try {
+    const wallet = getStoredWallet();
+    const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet || '')}`);
+    const w = await res.json();
+    const trades = w.trades || [];
+    const totalTrades = trades.length;
+    const closedTrades = trades.filter(t => t.status === 'CLOSED');
+    const winningTrades = closedTrades.filter(t => (t.pnl || 0) > 0).length;
+    const winRate = totalTrades > 0 ? Math.round((winningTrades / closedTrades.length) * 100) || 0 : 0;
+    const netPnl = w.net_pnl || 0;
+    const userXp = Math.floor(netPnl * 10) + (totalTrades * 10);
+    
+    let streak = 0;
+    const sortedTrades = [...trades].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    for (const t of sortedTrades) {
+      if (t.status === 'CLOSED' && (t.pnl || 0) > 0) streak++;
+      else if (t.status === 'CLOSED') break;
+    }
+
+    const baseData = LB_DATA[type] || LB_DATA.pts;
+    const userEntry = {
+      id: 'me',
+      name: wallet ? wallet.slice(0, 8) : 'you',
+      av: wallet ? wallet.slice(2, 4).toUpperCase() : 'YO',
+      score: type === 'pts' ? userXp.toLocaleString() : 
+             type === 'pnl' ? (netPnl >= 0 ? `+$${netPnl.toFixed(0)}` : `-$${Math.abs(netPnl).toFixed(0)}`) :
+             type === 'wr' ? `${winRate}%` :
+             type === 'act' ? totalTrades.toString() :
+             streak.toString(),
+      meta: type === 'act' ? 'trades placed' : 'current streak',
+      sc: netPnl > 0 ? 'pos' : netPnl < 0 ? 'neg' : '',
+      isMe: true,
+      badges: [],
+    };
+
+    let combined = [...baseData.filter(d => !d.isMe), userEntry];
+    
+    if (type === 'pts') {
+      combined.sort((a, b) => parseInt(b.score.replace(/,/g, '')) - parseInt(a.score.replace(/,/g, '')));
+    } else if (type === 'pnl') {
+      combined.sort((a, b) => {
+        const aVal = parseFloat(a.score.replace(/[+$]/g, ''));
+        const bVal = parseFloat(b.score.replace(/[+$]/g, ''));
+        return bVal - aVal;
+      });
+    } else if (type === 'wr') {
+      combined.sort((a, b) => parseInt(b.score) - parseInt(a.score));
+    } else if (type === 'act') {
+      combined.sort((a, b) => parseInt(b.score) - parseInt(a.score));
+    } else if (type === 'str') {
+      combined.sort((a, b) => parseInt(b.score || 0) - parseInt(a.score || 0));
+    }
+
+    return combined;
+  } catch {
+    const data = LB_DATA[type];
+    return data || LB_DATA.pts;
+  }
 }
 
 // Intern 5: replace with → fetch(`${BASE}/api/user/stats`)

@@ -64,7 +64,7 @@ export default function LeaderboardPage() {
           <div className="lb-info">
             <div className="lb-name">
               @{p.name}
-              {p.isMe && <span style={{ fontSize: 9, color: 'var(--g3)' }}> (you)</span>}
+              {p.isMe && <span style={{ fontSize: 9, color: 'var(--text-muted)' }}> (you)</span>}
             </div>
             <div className="lb-meta">{p.meta}</div>
             {p.badges && p.badges.length > 0 && (
@@ -109,7 +109,7 @@ export default function LeaderboardPage() {
 
           {loading ? (
             <div className="podium fu d2">
-              <div style={{ textAlign: 'center', color: 'var(--g3)' }}>Loading...</div>
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>
             </div>
           ) : (
             <>

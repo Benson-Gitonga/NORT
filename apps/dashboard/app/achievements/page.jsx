@@ -49,7 +49,7 @@ export default function AchievementsPage() {
 
         <div className="scroll">
           {loading ? (
-            <div style={{ padding: 20, textAlign: 'center', color: 'var(--g3)' }}>Loading...</div>
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>
           ) : (
             <>
               <div className="xp-card fu d1">
