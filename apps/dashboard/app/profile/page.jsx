@@ -1,19 +1,29 @@
 'use client';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTelegram } from '@/hooks/useTelegram';
+import { getUserStats, getAchievements } from '@/lib/api';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
 
 export default function ProfilePage() {
   const { user: authUser, walletAddress, logout } = useAuth();
   const { user: tgUser, haptic } = useTelegram();
+  const [stats, setStats] = useState(null);
+  const [achievements, setAchievements] = useState([]);
 
-  // Debug: log user data
+  useEffect(() => {
+    Promise.all([getUserStats(), getAchievements()])
+      .then(([st, ach]) => {
+        setStats(st);
+        setAchievements(ach.filter(a => a.earned));
+      })
+      .catch(() => {});
+  }, []);
+
   console.log('[Profile] Auth user:', authUser);
   console.log('[Profile] Telegram user:', tgUser);
 
-  // Combine user info from Privy and Telegram - prioritize Telegram
   const displayName = tgUser?.first_name || authUser?.firstName || authUser?.name || authUser?.displayName || 'User';
   const displayUsername = tgUser?.username || authUser?.email?.split('@')[0] || '';
   
@@ -28,7 +38,6 @@ export default function ProfilePage() {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
   };
 
-  // Get initials for avatar
   const getInitials = (name) => {
     if (!name) return 'U';
     const parts = name.split(' ').filter(p => p.length > 0);
@@ -73,6 +82,72 @@ export default function ProfilePage() {
               </div>
             )}
           </div>
+
+          {/* XP Card */}
+          {stats && (
+            <div className="xp-card fu d2">
+              <div className="xp-ring">
+                <svg viewBox="0 0 54 54">
+                  <circle className="xp-bg" cx="27" cy="27" r="22" />
+                  <circle
+                    className="xp-fg"
+                    cx="27"
+                    cy="27"
+                    r="22"
+                    style={{
+                      strokeDasharray: 138,
+                      strokeDashoffset: 138 - (138 * stats.xpProgress) / 100,
+                    }}
+                  />
+                </svg>
+                <div className="xp-ctr">{stats.xpProgress}%</div>
+              </div>
+              <div className="xp-info">
+                <div className="xp-lbl">Level {stats.level}</div>
+                <div className="xp-val">{stats.xp.toLocaleString()}</div>
+                <div className="xp-sub">
+                  {stats.xpToNextLevel} XP to Level {stats.level + 1}
+                </div>
+              </div>
+              <div className="str-pill">🔥 {stats.streak}</div>
+            </div>
+          )}
+
+          {/* Quick stats */}
+          {stats && (
+            <div className="bstats fu d3">
+              <div className="sc2">
+                <span className="slbl">Rank</span>
+                <span className="sv">#{stats.rank}</span>
+              </div>
+              <div className="sc2">
+                <span className="slbl">Win Rate</span>
+                <span className="sv">{stats.winRate}%</span>
+              </div>
+              <div className="sc2">
+                <span className="slbl">Trades</span>
+                <span className="sv">{stats.totalTrades}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Recent badges preview */}
+          {achievements.length > 0 && (
+            <>
+              <div className="sec-lbl fu d4">
+                <span className="sec-t">Badges</span>
+                <span className="sec-t">{achievements.length} earned</span>
+              </div>
+              <div className="ach-grid fu d5" style={{ marginBottom: 0 }}>
+                {achievements.slice(0, 4).map(a => (
+                  <div key={a.id} className="ach-card earned" style={{ cursor: 'default' }}>
+                    <div className="ach-icon">{a.icon}</div>
+                    <div className="ach-name">{a.name}</div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Account section */}
           <div className="sec-lbl fu d2">
