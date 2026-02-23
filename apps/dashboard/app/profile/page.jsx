@@ -11,6 +11,7 @@ export default function ProfilePage() {
   const { user: tgUser, haptic } = useTelegram();
   const [stats, setStats] = useState(null);
   const [achievements, setAchievements] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([getUserStats(), getAchievements()])
@@ -18,11 +19,9 @@ export default function ProfilePage() {
         setStats(st);
         setAchievements(ach.filter(a => a.earned));
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
-
-  console.log('[Profile] Auth user:', authUser);
-  console.log('[Profile] Telegram user:', tgUser);
 
   const displayName = tgUser?.first_name || authUser?.firstName || authUser?.name || authUser?.displayName || 'User';
   const displayUsername = tgUser?.username || authUser?.email?.split('@')[0] || '';
@@ -118,7 +117,7 @@ export default function ProfilePage() {
             <div className="bstats fu d3">
               <div className="sc2">
                 <span className="slbl">Rank</span>
-                <span className="sv">#{stats.rank}</span>
+                <span className="sv">#{stats.rank || '-'}</span>
               </div>
               <div className="sc2">
                 <span className="slbl">Win Rate</span>
@@ -150,11 +149,11 @@ export default function ProfilePage() {
           )}
 
           {/* Account section */}
-          <div className="sec-lbl fu d2">
+          <div className="sec-lbl fu d6" style={{ marginTop: 16 }}>
             <span className="sec-t">Account</span>
           </div>
 
-          <div className="settings-group fu d3">
+          <div className="settings-group fu d7">
             {tgUser && (
               <>
                 <div className="settings-item">
@@ -182,11 +181,11 @@ export default function ProfilePage() {
           </div>
 
           {/* Wallet section */}
-          <div className="sec-lbl fu d4">
+          <div className="sec-lbl fu d8">
             <span className="sec-t">Wallet</span>
           </div>
 
-          <div className="settings-group fu d5">
+          <div className="settings-group fu d9">
             <div className="settings-item">
               <div className="settings-label">Address</div>
               <div className="settings-value mono">{formatAddress(walletAddress)}</div>
@@ -200,11 +199,11 @@ export default function ProfilePage() {
           </div>
 
           {/* Logout */}
-          <div className="sec-lbl fu d6">
+          <div className="sec-lbl fu d10">
             <span className="sec-t">Session</span>
           </div>
 
-          <div className="settings-group fu d7">
+          <div className="settings-group fu d11">
             <button 
               className="settings-btn danger" 
               onClick={handleLogout}
@@ -220,7 +219,7 @@ export default function ProfilePage() {
           </div>
 
           {/* Disclaimer */}
-          <div className="profile-disclaimer fu d8">
+          <div className="profile-disclaimer fu d12">
             <div className="disclaimer-icon">⚠</div>
             <div className="disclaimer-text">
               This is a paper trading demo. No real funds are involved. 

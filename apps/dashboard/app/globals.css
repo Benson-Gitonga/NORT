@@ -1207,8 +1207,6 @@ body::after {
 .apu-t .apn { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; }
 .apu-t .apx { font-family: 'DM Mono', monospace; font-size: 10px; opacity: 0.7; margin-top: 2px; }
 
-.ach-popup:hover { animation: none; }
-
 /* ═══════════════════════════════════════════
    PROFILE stats styles
    ═══════════════════════════════════════════ */

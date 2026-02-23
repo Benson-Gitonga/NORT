@@ -1,7 +1,8 @@
 'use client';
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { getTrades, getWallet, commitTrade } from '@/lib/api';
+import { getTrades, getWallet, commitTrade, getAchievements } from '@/lib/api';
+import { useAchievement } from '@/components/AchievementContext';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
 
@@ -9,17 +10,52 @@ export default function BetsPage() {
   const [trades, setTrades]   = useState([]);
   const [wallet, setWallet]   = useState(null);
   const [loading, setLoading] = useState(true);
+  const [prevTrades, setPrevTrades] = useState(0);
+  const [checkedInitial, setCheckedInitial] = useState(false);
+  const { showAchievement } = useAchievement();
 
   useEffect(() => {
     Promise.all([getTrades(), getWallet()])
-      .then(([t, w]) => { setTrades(t); setWallet(w); })
+      .then(([t, w]) => { 
+        setTrades(t); 
+        setWallet(w); 
+        setPrevTrades(t.length);
+        setCheckedInitial(true);
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  const checkAchievements = async (currentTrades) => {
+    const ach = await getAchievements();
+    
+    if (currentTrades >= 1) {
+      const first = ach.find(a => a.id === 'first' && a.earned);
+      if (first) showAchievement(first);
+    }
+    if (currentTrades >= 10) {
+      const paper = ach.find(a => a.id === 'paper' && a.earned);
+      if (paper) showAchievement(paper);
+    }
+    if (currentTrades >= 50) {
+      const whale = ach.find(a => a.id === 'whale' && a.earned);
+      if (whale) showAchievement(whale);
+    }
+  };
+
+  useEffect(() => {
+    if (checkedInitial && trades.length > 0) {
+      checkAchievements(trades.length);
+    }
+  }, [trades, checkedInitial]);
+
   const onCommit = async (id) => {
     const r = await commitTrade(id);
     if (r.ok) {
       const t = await getTrades();
+      const w = await getWallet();
       setTrades(t);
+      setWallet(w);
+      setTimeout(() => checkAchievements(t.length), 500);
     }
   };
 
