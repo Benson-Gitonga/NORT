@@ -1,15 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useEffect, useState, useRef } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useTelegram } from "./useTelegram";
 
 export function useRealAuth() {
   const { ready: privyReady, authenticated, user, login: privyLogin, logout: privyLogout } = usePrivy();
+  const { wallets } = useWallets();
   const { user: tgUser } = useTelegram();
+  const [lsWallet, setLsWallet] = useState(null);
   const [initialized, setInitialized] = useState(false);
   const [forceLoggedOut, setForceLoggedOut] = useState(false);
-  const logoutInProgress = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -23,7 +23,6 @@ export function useRealAuth() {
     setInitialized(true);
   }, []);
 
-  // Clear session on tab close / page hide
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleUnload = () => {
@@ -40,8 +39,6 @@ export function useRealAuth() {
   const isAuthed = !!privyReady && initialized && !forceLoggedOut && (!!authenticated || !!walletAddress);
 
   const logout = async () => {
-    console.log("[Auth] logout called");
-    // Clear local storage first
     try {
       if (typeof window !== "undefined") {
         localStorage.removeItem("walletAddress");
@@ -50,25 +47,20 @@ export function useRealAuth() {
     } catch(e) {
       console.warn("[Auth] localStorage error:", e);
     }
-    // Await Privy logout before redirecting
     try {
       await privyLogout();
-      console.log("[Auth] privyLogout complete");
     } catch(e) {
       console.warn("[Auth] privyLogout error:", e);
     }
-    // Hard redirect after logout is confirmed
     if (typeof window !== "undefined") {
       window.location.replace(window.location.origin + "/");
     }
   };
-  // End of logout function
 
   return {
     ready: !!privyReady && initialized,
     isAuthed,
     user: user || null,
-    user,
     walletAddress,
     login: privyLogin,
     logout,
