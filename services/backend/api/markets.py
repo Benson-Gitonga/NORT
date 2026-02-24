@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 from datetime import datetime, timedelta
 from typing import List
+from sqlalchemy.orm import Session
 
 from services.backend.data.database import engine
 from services.backend.data.models import Market
@@ -25,17 +26,14 @@ CACHE_TTL_MINUTES = 5
 # ─────────────────────────────────────────────
 
 def cache_is_fresh(session: Session) -> bool:
-    """
-    Checks if we have markets cached recently enough.
-    If the most recently updated market is older than TTL, cache is stale.
-    """
-    statement = select(Market).order_by(Market.expires_at.desc()).limit(1)
-    latest = session.exec(statement).first()
-    if not latest:
-        return False
-    # We use expires_at as a proxy — in a full version you'd store updated_at
-    # For now: if we have any markets at all, assume cache is fresh
-    return True
+    try:
+        # SQLModel/SQLAlchemy 2.0 syntax
+        statement = select(Market).order_by(Market.expires_at.desc()).limit(1)
+        result = session.execute(statement)
+        latest = result.scalar_one_or_none()
+        return latest is not None
+    except:
+        return False  # Any DB error = cache stale
 
 
 # ─────────────────────────────────────────────
@@ -97,13 +95,12 @@ def sync_markets(session: Session):
 # Refreshes cache from Polymarket if stale
 # ─────────────────────────────────────────────
 
+# Remove duplicate @router.get("/markets") at bottom - KEEP ONLY THIS:
+
+@router.get("/")  # This becomes /markets/
+
 @router.get("/")
 def get_markets():
-    """
-    Returns all active markets.
-    Fetches from Polymarket API if cache is empty.
-    Used by: Telegram /trending, Dashboard Markets page
-    """
     with Session(engine) as session:
         if not cache_is_fresh(session):
             print("Cache empty — syncing from Polymarket...")
@@ -111,59 +108,25 @@ def get_markets():
 
         statement = select(Market).where(Market.is_active == True)
         markets = session.exec(statement).all()
-
         return {
             "markets": [market_to_response(m) for m in markets],
             "count": len(markets),
             "cached_at": datetime.utcnow().isoformat()
         }
 
-
-# ─────────────────────────────────────────────
-# GET /markets/refresh
-# Force a fresh pull from Polymarket
-# Useful for the demo — call this to populate DB
-# ─────────────────────────────────────────────
+@router.get("/{market_id}")
+def get_market(market_id: str):
+    with Session(engine) as session:
+        market = session.get(Market, market_id)
+        if not market:
+            raise HTTPException(status_code=404, detail=f"Market {market_id} not found")
+        return market_to_response(market)
 
 @router.get("/refresh")
 def refresh_markets():
-    """
-    Forces a fresh fetch from Polymarket regardless of cache.
-    Call this first to populate the database before the demo.
-    """
     with Session(engine) as session:
         sync_markets(session)
-        statement = select(Market).where(Market.is_active == True)
-        markets = session.exec(statement).all()
-
-        return {
-            "message": f"Refreshed successfully. {len(markets)} markets loaded.",
-            "count": len(markets)
-        }
-
-
-# ─────────────────────────────────────────────
-# GET /markets/{id}
-# Returns a single market by ID
-# ─────────────────────────────────────────────
-
-@router.get("/{market_id}")
-def get_market(market_id: str):
-    """
-    Returns a single market by its ID.
-    Used by: OpenClaw get_market() tool, Telegram /market <id>
-    """
-    with Session(engine) as session:
-        market = session.get(Market, market_id)
-
-        if not market:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Market {market_id} not found. Try GET /markets/refresh first."
-            )
-
-        return market_to_response(market)
-
+        return {"message": "Markets refreshed"}
 
 # ─────────────────────────────────────────────
 # HELPER — clean response format
@@ -181,3 +144,4 @@ def market_to_response(market: Market) -> dict:
         "is_active":     market.is_active,
         "expires_at":    str(market.expires_at),
     }
+

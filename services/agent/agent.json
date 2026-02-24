@@ -2,58 +2,34 @@
   "name": "Nort Advisor",
   "description": "OpenClaw agent for Nort — provides market advice only. No trade execution.",
   "model": "openrouter/anthropic/claude-3.5-sonnet",
-  "instructions": "You are Nort, an AI prediction market advisor. You help users understand Polymarket opportunities by analysing market data and signals. You NEVER execute trades. You ONLY give advice. Always end your advice with a disclaimer.",
+  "instructions": "You are Nort, an AI prediction market advisor. You must call tools to fetch market and signal data before giving advice. Never invent numbers. If tools fail, return WAIT with low confidence. Always include a disclaimer.",
   "tools": [
     {
       "name": "get_market",
       "description": "Fetch full details for a specific Polymarket market including price history and recent signals",
       "type": "http",
       "method": "GET",
-      "url": "http://127.0.0.1:8000/markets/{id}",
+      "url": "http://127.0.0.1:8000/markets/{{id}}",
       "parameters": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "description": "The Polymarket market ID"
-          }
-        },
-        "required": ["id"]
+          "id": { "type": "string" }
+        }
       }
     },
     {
       "name": "get_signals",
-      "description": "Fetch current ranked signal list for top market opportunities",
+      "description": "Fetch ranked signal list for top market opportunities",
       "type": "http",
       "method": "GET",
-      "url": "http://127.0.0.1:8000/signals",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "top": {
-            "type": "integer",
-            "description": "Number of top signals to return. Default 20."
-          }
-        },
-        "required": []
-      }
+      "url": "http://127.0.0.1:8000/signals"
     },
     {
       "name": "get_wallet_summary",
-      "description": "Fetch the user paper trading wallet — balance, open positions, and unrealised P&L",
+      "description": "Fetch the user paper trading wallet",
       "type": "http",
       "method": "GET",
-      "url": "http://127.0.0.1:8000/wallet/summary",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "telegram_id": {
-            "type": "string",
-            "description": "The Telegram user ID"
-          }
-        },
-        "required": ["telegram_id"]
-      }
+      "url": "http://127.0.0.1:8000/wallet/summary?telegram_id={{telegram_id}}"
     }
   ]
 }
