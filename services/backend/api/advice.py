@@ -170,7 +170,8 @@ async def fetch_market_data(market_id: str) -> dict:
             else:
                 print(f"[Market] Status {response.status_code}")
     except Exception as e:
-        print(f"[Market] Fetch failed: {e}")
+        import traceback
+        print(f"[Market] Fetch failed: {e}\n{traceback.format_exc()}")
     return {}
 
 
@@ -181,7 +182,8 @@ async def fetch_signals() -> dict:
             if response.status_code == 200:
                 return response.json()
     except Exception as e:
-        print(f"[Signals] Fetch failed: {e}")
+        import traceback
+        print(f"[Signals] Fetch failed: {e}\n{traceback.format_exc()}")
     return {}
 
 
@@ -242,3 +244,14 @@ Return JSON only. The market_id field must be exactly: {request.market_id}
     raw_response = await call_openclaw(ADVICE_SYSTEM_PROMPT, user_message)
     print(f"RAW RESPONSE: {raw_response}")
     return parse_response(raw_response, request.market_id)
+
+@router.get("/markets")
+async def get_markets_mock():
+    return {
+        "markets": [
+            {"id": "521947", "question": "Will Trump deport <250k?", "yes_price": 0.35, "no_price": 0.65, "volume": 125000},
+            {"id": "549869", "question": "Bitcoin $100k by June?", "yes_price": 0.68, "no_price": 0.32, "volume": 89000}
+        ],
+        "count": 2,
+        "cached_at": "2026-02-24T22:00:00Z"
+    }
