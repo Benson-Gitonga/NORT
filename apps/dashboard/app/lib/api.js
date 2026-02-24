@@ -343,6 +343,35 @@ export async function commitTrade(tradeId) {
 }
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
+<<<<<<< HEAD
+
+export async function getLeaderboard(limit = 50) {
+  try {
+    const res = await fetch(`${BASE}/api/leaderboard?limit=${limit}`);
+    if (!res.ok) throw new Error('fetch failed');
+    const data = await res.json();
+    return data.leaderboard || [];
+  } catch {
+    // Mock fallback
+    return [
+      { rank: 1, display_name: 'whale.eth', portfolio_value: 1842.50, net_pnl: 842.50, net_pnl_pct: 84.25, win_rate: 78, total_trades: 34, streak: 5, xp: 780, badge: { id: 'oracle', label: 'Oracle', emoji: '🔮', color: '#7c3aed' } },
+      { rank: 2, display_name: 'degensama', portfolio_value: 1560.00, net_pnl: 560.00, net_pnl_pct: 56.00, win_rate: 65, total_trades: 22, streak: 3, xp: 530, badge: { id: 'shark', label: 'Shark', emoji: '🦈', color: '#0ea5e9' } },
+      { rank: 3, display_name: 'nort_user', portfolio_value: 1230.80, net_pnl: 230.80, net_pnl_pct: 23.08, win_rate: 60, total_trades: 15, streak: 1, xp: 265, badge: { id: 'trader', label: 'Trader', emoji: '⚡', color: '#f59e0b' } },
+      { rank: 4, display_name: '0xab12...ef34', portfolio_value: 1100.00, net_pnl: 100.00, net_pnl_pct: 10.00, win_rate: 55, total_trades: 8, streak: 0, xp: 130, badge: { id: 'degen', label: 'Degen', emoji: '🎲', color: '#10b981' } },
+      { rank: 5, display_name: 'anon999', portfolio_value: 980.00, net_pnl: -20.00, net_pnl_pct: -2.00, win_rate: 40, total_trades: 5, streak: 0, xp: 50, badge: { id: 'degen', label: 'Degen', emoji: '🎲', color: '#10b981' } },
+    ];
+  }
+}
+
+export async function getMyRank(walletAddress) {
+  try {
+    const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(walletAddress)}`);
+    if (!res.ok) throw new Error('not found');
+    return await res.json();
+  } catch {
+    return null;
+  }
+=======
 export const MOCK_USER_STATS = {
   xp: 1240,
   level: 5,
@@ -533,4 +562,5 @@ export async function getAchievements() {
       return { ...a, earned };
     });
   } catch { return ACHIEVEMENTS_DATA; }
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
 }

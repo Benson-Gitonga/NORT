@@ -85,6 +85,20 @@ class PaperTrade(SQLModel, table=True):
     pnl: Optional[float] = None     # Filled when trade is closed
 
 
+class LeaderboardSnapshot(SQLModel, table=True):
+    """Daily snapshot of each user's leaderboard stats (for history/charts)."""
+    __tablename__ = "leaderboard_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    display_name: Optional[str] = None
+    portfolio_value: float = Field(default=1000.0)
+    net_pnl: float = Field(default=0.0)
+    total_trades: int = Field(default=0)
+    win_rate: float = Field(default=0.0)   # 0-100
+    snapshot_date: datetime = Field(default_factory=datetime.utcnow)
+
+
 class WalletConfig(SQLModel, table=True):
     """Stores per-user paper wallet balances and settings."""
     __tablename__ = "wallet_config"

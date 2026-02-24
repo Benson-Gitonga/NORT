@@ -1,19 +1,73 @@
 "use client";
+<<<<<<< HEAD
+import { useEffect, useState } from "react";
+=======
 import { useEffect, useState, useRef } from "react";
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useTelegram } from "./useTelegram";
 
 export function useRealAuth() {
+<<<<<<< HEAD
+  const { ready: privyReady, authenticated, user, login: privyLogin, logout: privyLogout } = usePrivy();
+=======
   const { ready: privyReady, authenticated, user: privyUser, login: privyLogin, logout: privyLogout } = usePrivy();
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
   const { wallets } = useWallets();
   const { user: tgUser } = useTelegram();
   const [lsWallet, setLsWallet] = useState(null);
   const [initialized, setInitialized] = useState(false);
+<<<<<<< HEAD
+  const [forceLoggedOut, setForceLoggedOut] = useState(false);
+=======
   const logoutInProgress = useRef(false);
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const w = window.localStorage.getItem("walletAddress");
+<<<<<<< HEAD
+    const forceOut = window.localStorage.getItem("force_logout");
+    if (w) setLsWallet(w);
+    if (forceOut === "true") {
+      setForceLoggedOut(true);
+      window.localStorage.removeItem("force_logout");
+    }
+    setInitialized(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleUnload = () => {
+      try {
+        window.localStorage.removeItem("walletAddress");
+        window.localStorage.removeItem("nort_auth");
+      } catch {}
+    };
+    window.addEventListener("beforeunload", handleUnload);
+    return () => window.removeEventListener("beforeunload", handleUnload);
+  }, []);
+
+  const walletAddress = forceLoggedOut ? null : (wallets?.[0]?.address || lsWallet || null);
+  const isAuthed = !!privyReady && initialized && !forceLoggedOut && (!!authenticated || !!walletAddress);
+
+  const logout = async () => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("walletAddress");
+        localStorage.removeItem("nort_auth");
+      }
+    } catch(e) {
+      console.warn("[Auth] localStorage error:", e);
+    }
+    try {
+      await privyLogout();
+    } catch(e) {
+      console.warn("[Auth] privyLogout error:", e);
+    }
+    if (typeof window !== "undefined") {
+      window.location.replace(window.location.origin + "/");
+=======
     if (w) setLsWallet(w);
     setInitialized(true);
   }, []);
@@ -67,13 +121,18 @@ export function useRealAuth() {
     // Immediate redirect to home (which shows login)
     if (typeof window !== "undefined") {
       window.location.href = "/";
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
     }
   };
 
   return {
     ready: !!privyReady && initialized,
     isAuthed,
+<<<<<<< HEAD
+    user: user || null,
+=======
     user,
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
     walletAddress,
     login: privyLogin,
     logout,
