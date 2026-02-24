@@ -9,8 +9,8 @@ export default function RootLayout({ children }) {
       <body>
         <Script src="https://telegram.org/js/telegram-web-app.js" strategy="afterInteractive" />
         <Providers>
-          <AuthSync />
           <AchievementProvider>
+            <AuthSync />
             {children}
           </AchievementProvider>
         </Providers>

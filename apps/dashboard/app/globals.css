@@ -942,7 +942,6 @@ body::after {
   }
 }
 
-<<<<<<< HEAD
 /* ─────────────────────────────────────────────
    LEADERBOARD PAGE
 ───────────────────────────────────────────── */
@@ -1033,7 +1032,7 @@ body::after {
   .lb-hide-sm { display: none; }
   .lb-table-header { grid-template-columns: 36px 1fr 70px 80px; }
   .lb-row         { grid-template-columns: 36px 1fr 70px 80px; }
-=======
+}
 /* ═══════════════════════════════════════════
    LEADERBOARD styles
    ═══════════════════════════════════════════ */
@@ -1319,5 +1318,4 @@ body::after {
 @media (min-width: 768px) {
   .ach-grid { grid-template-columns: repeat(4, 1fr); }
   .ach-popup { left: 50%; transform: translateX(-50%); max-width: 400px; }
->>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
 }

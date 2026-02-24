@@ -51,9 +51,6 @@ def connect_wallet(
         session.add(user)
         session.commit()
         session.refresh(user)
-
-        if telegram_id:
-            _ensure_wallet_config(telegram_id, session)
     else:
         changed = False
         if telegram_id and user.telegram_id != telegram_id:
@@ -67,8 +64,10 @@ def connect_wallet(
             session.commit()
             session.refresh(user)
 
-        if user.telegram_id:
-            _ensure_wallet_config(user.telegram_id, session)
+    # Always ensure a WalletConfig exists.
+    # Key: telegram_id if linked, otherwise wallet_address (dashboard-only users).
+    config_key = user.telegram_id or user.wallet_address
+    _ensure_wallet_config(config_key, session)
 
     return user
 
@@ -119,10 +118,12 @@ def get_wallet_summary(
     if wallet_address and not telegram_user_id:
         wallet_address = wallet_address.lower()
         user = get_user_by_wallet(wallet_address, session)
-        if not user:
-            raise ValueError(f"Wallet {wallet_address} not found. Connect it first.")
-        # Use telegram_id if linked, otherwise fall back to wallet_address as the config key
-        telegram_user_id = user.telegram_id or wallet_address
+        if user:
+            # Prefer telegram_id if linked, else use wallet_address as config key
+            telegram_user_id = user.telegram_id or user.wallet_address
+        else:
+            # Unknown wallet — auto-provision
+            telegram_user_id = wallet_address
     elif telegram_user_id and not wallet_address:
         user = get_user_by_telegram(telegram_user_id, session)
         wallet_address = user.wallet_address if user else None
@@ -136,9 +137,9 @@ def get_wallet_summary(
     config = session.exec(config_stmt).first()
 
     if not config:
-        raise ValueError(
-            f"No paper wallet for Telegram user {telegram_user_id}. Connect a wallet first."
-        )
+        # Auto-provision a paper wallet so dashboard users don't need to
+        # call /wallet/connect first — they get $1000 on first summary hit.
+        config = _ensure_wallet_config(telegram_user_id, session)
 
     trades_stmt = select(PaperTrade).where(
         PaperTrade.telegram_user_id == str(telegram_user_id)
@@ -223,10 +224,7 @@ def place_paper_trade(
     config = session.exec(config_stmt).first()
 
     if not config:
-        raise ValueError(
-            f"No paper wallet for Telegram user {telegram_user_id}. "
-            "Connect a wallet first via POST /wallet/connect."
-        )
+        config = _ensure_wallet_config(telegram_user_id, session)
 
     if direction.upper() == "BUY" and config.paper_balance < total_cost:
         raise ValueError(
