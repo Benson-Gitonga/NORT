@@ -343,6 +343,7 @@ export async function commitTrade(tradeId) {
 }
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 
 export async function getLeaderboard(limit = 50) {
   try {
@@ -370,4 +371,196 @@ export async function getMyRank(walletAddress) {
   } catch {
     return null;
   }
+=======
+export const MOCK_USER_STATS = {
+  xp: 1240,
+  level: 5,
+  rank: 5,
+  streak: 3,
+  xpToNextLevel: 260,
+  xpProgress: 65,
+  totalTrades: 12,
+  winRate: 67,
+};
+
+export const LB_DATA = {
+  pts: [
+    { id: 'u1', name: 'cryptoking', av: 'CK', score: '4,820', meta: '32 trades', badges: ['🥇', '🔥', '💎'], isMe: false },
+    { id: 'u2', name: 'whale_007', av: 'WH', score: '3,640', meta: '28 trades', badges: ['🐳', '📈'], isMe: false },
+    { id: 'u3', name: 'moon_girl', av: 'MG', score: '3,210', meta: '19 trades', badges: ['🌙', '⭐', '🦄'], isMe: false },
+    { id: 'u4', name: 'degenape', av: 'DA', score: '2,890', meta: '41 trades', badges: ['🎰', '📝'], isMe: false },
+    { id: 'u5', name: 'nortuser', av: 'NJ', score: '1,240', meta: '12 trades', badges: ['🎯', '📈', '⭐'], isMe: true },
+    { id: 'u6', name: 'traderbro', av: 'TB', score: '980', meta: '8 trades', badges: ['🎯'], isMe: false },
+    { id: 'u7', name: 'satoshi99', av: 'S9', score: '760', meta: '6 trades', badges: ['🎯'], isMe: false },
+  ],
+  pnl: [
+    { id: 'u2', name: 'whale_007', av: 'WH', score: '+$842', meta: '28 trades', sc: 'pos', isMe: false },
+    { id: 'u1', name: 'cryptoking', av: 'CK', score: '+$621', meta: '32 trades', sc: 'pos', isMe: false },
+    { id: 'u3', name: 'moon_girl', av: 'MG', score: '+$310', meta: '19 trades', sc: 'pos', isMe: false },
+    { id: 'u5', name: 'nortuser', av: 'NJ', score: '+$9', meta: '12 trades', sc: 'pos', isMe: true },
+    { id: 'u6', name: 'traderbro', av: 'TB', score: '-$42', meta: '8 trades', sc: 'neg', isMe: false },
+    { id: 'u4', name: 'degenape', av: 'DA', score: '-$180', meta: '41 trades', sc: 'neg', isMe: false },
+    { id: 'u7', name: 'satoshi99', av: 'S9', score: '-$290', meta: '6 trades', sc: 'neg', isMe: false },
+  ],
+  wr: [
+    { id: 'u1', name: 'cryptoking', av: 'CK', score: '84%', meta: '32 trades', isMe: false },
+    { id: 'u3', name: 'moon_girl', av: 'MG', score: '79%', meta: '19 trades', isMe: false },
+    { id: 'u2', name: 'whale_007', av: 'WH', score: '71%', meta: '28 trades', isMe: false },
+    { id: 'u5', name: 'nortuser', av: 'NJ', score: '67%', meta: '12 trades', isMe: true },
+    { id: 'u7', name: 'satoshi99', av: 'S9', score: '60%', meta: '6 trades', isMe: false },
+    { id: 'u6', name: 'traderbro', av: 'TB', score: '50%', meta: '8 trades', isMe: false },
+    { id: 'u4', name: 'degenape', av: 'DA', score: '44%', meta: '41 trades', isMe: false },
+  ],
+  act: [
+    { id: 'u4', name: 'degenape', av: 'DA', score: '41', meta: 'trades placed', isMe: false },
+    { id: 'u1', name: 'cryptoking', av: 'CK', score: '32', meta: 'trades placed', isMe: false },
+    { id: 'u2', name: 'whale_007', av: 'WH', score: '28', meta: 'trades placed', isMe: false },
+    { id: 'u3', name: 'moon_girl', av: 'MG', score: '19', meta: 'trades placed', isMe: false },
+    { id: 'u5', name: 'nortuser', av: 'NJ', score: '12', meta: 'trades placed', isMe: true },
+    { id: 'u6', name: 'traderbro', av: 'TB', score: '8', meta: 'trades placed', isMe: false },
+    { id: 'u7', name: 'satoshi99', av: 'S9', score: '6', meta: 'trades placed', isMe: false },
+  ],
+  str: [
+    { id: 'u1', name: 'cryptoking', av: 'CK', score: '🔥 8', meta: 'current streak', isMe: false },
+    { id: 'u3', name: 'moon_girl', av: 'MG', score: '🔥 6', meta: 'current streak', isMe: false },
+    { id: 'u2', name: 'whale_007', av: 'WH', score: '🔥 5', meta: 'current streak', isMe: false },
+    { id: 'u5', name: 'nortuser', av: 'NJ', score: '🔥 3', meta: 'current streak', isMe: true },
+    { id: 'u4', name: 'degenape', av: 'DA', score: '🔥 2', meta: 'current streak', isMe: false },
+    { id: 'u6', name: 'traderbro', av: 'TB', score: '🔥 1', meta: 'current streak', isMe: false },
+    { id: 'u7', name: 'satoshi99', av: 'S9', score: '—', meta: 'no streak', isMe: false },
+  ],
+};
+
+export const ACHIEVEMENTS_DATA = [
+  { id: 'first', icon: '🎯', name: 'First Trade', desc: 'Complete 1 paper trade', xp: 50, earned: true, isNew: false },
+  { id: 'bullish', icon: '📈', name: 'Bullish', desc: 'First profitable trade', xp: 100, earned: true, isNew: false },
+  { id: 'vip', icon: '⭐', name: 'VIP', desc: 'Unlock premium advice', xp: 200, earned: true, isNew: true },
+  { id: 'moon', icon: '🌙', name: 'Moon Hunter', desc: 'Catch a hot signal & profit', xp: 150, earned: true, isNew: false },
+  { id: 'contra', icon: '🦄', name: 'Contrarian', desc: 'Win against majority odds', xp: 250, earned: true, isNew: true },
+  { id: 'paper', icon: '📝', name: 'Paper Hands', desc: 'Complete 10 trades', xp: 100, earned: false, isNew: false },
+  { id: 'onfire', icon: '🔥', name: 'On Fire', desc: '5-trade winning streak', xp: 300, earned: false, isNew: false },
+  { id: 'diamond', icon: '💎', name: 'Diamond Hands', desc: 'Hold until market closes', xp: 200, earned: false, isNew: false },
+  { id: 'degen', icon: '🎰', name: 'Degenerate', desc: '10-trade winning streak', xp: 500, earned: false, isNew: false },
+  { id: 'whale', icon: '🐳', name: 'Whale', desc: 'Complete 50 trades', xp: 750, earned: false, isNew: false },
+];
+
+// Intern 1/5: replace with → fetch(`${BASE}/api/leaderboard`)
+export async function getLeaderboard(type = 'pts') {
+  try {
+    const wallet = getStoredWallet();
+    const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet || '')}`);
+    const w = await res.json();
+    const trades = w.trades || [];
+    const totalTrades = trades.length;
+    const closedTrades = trades.filter(t => t.status === 'CLOSED');
+    const winningTrades = closedTrades.filter(t => (t.pnl || 0) > 0).length;
+    const winRate = totalTrades > 0 ? Math.round((winningTrades / closedTrades.length) * 100) || 0 : 0;
+    const netPnl = w.net_pnl || 0;
+    const userXp = Math.floor(netPnl * 10) + (totalTrades * 10);
+    
+    let streak = 0;
+    const sortedTrades = [...trades].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    for (const t of sortedTrades) {
+      if (t.status === 'CLOSED' && (t.pnl || 0) > 0) streak++;
+      else if (t.status === 'CLOSED') break;
+    }
+
+    const baseData = LB_DATA[type] || LB_DATA.pts;
+    const userEntry = {
+      id: 'me',
+      name: wallet ? wallet.slice(0, 8) : 'you',
+      av: wallet ? wallet.slice(2, 4).toUpperCase() : 'YO',
+      score: type === 'pts' ? userXp.toLocaleString() : 
+             type === 'pnl' ? (netPnl >= 0 ? `+$${netPnl.toFixed(0)}` : `-$${Math.abs(netPnl).toFixed(0)}`) :
+             type === 'wr' ? `${winRate}%` :
+             type === 'act' ? totalTrades.toString() :
+             streak.toString(),
+      meta: type === 'act' ? 'trades placed' : 'current streak',
+      sc: netPnl > 0 ? 'pos' : netPnl < 0 ? 'neg' : '',
+      isMe: true,
+      badges: [],
+    };
+
+    let combined = [...baseData.filter(d => !d.isMe), userEntry];
+    
+    if (type === 'pts') {
+      combined.sort((a, b) => parseInt(b.score.replace(/,/g, '')) - parseInt(a.score.replace(/,/g, '')));
+    } else if (type === 'pnl') {
+      combined.sort((a, b) => {
+        const aVal = parseFloat(a.score.replace(/[+$]/g, ''));
+        const bVal = parseFloat(b.score.replace(/[+$]/g, ''));
+        return bVal - aVal;
+      });
+    } else if (type === 'wr') {
+      combined.sort((a, b) => parseInt(b.score) - parseInt(a.score));
+    } else if (type === 'act') {
+      combined.sort((a, b) => parseInt(b.score) - parseInt(a.score));
+    } else if (type === 'str') {
+      combined.sort((a, b) => parseInt(b.score || 0) - parseInt(a.score || 0));
+    }
+
+    return combined;
+  } catch {
+    const data = LB_DATA[type];
+    return data || LB_DATA.pts;
+  }
+}
+
+// Intern 5: replace with → fetch(`${BASE}/api/user/stats`)
+export async function getUserStats() {
+  try {
+    const wallet = getStoredWallet();
+    if (!wallet) return MOCK_USER_STATS;
+    const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
+    const w = await res.json();
+    const trades = w.trades || [];
+    const totalTrades = trades.length;
+    const closedTrades = trades.filter(t => t.status === 'CLOSED');
+    const winningTrades = closedTrades.filter(t => (t.pnl || 0) > 0).length;
+    const winRate = totalTrades > 0 ? Math.round((winningTrades / closedTrades.length) * 100) || 0 : 0;
+    const xp = Math.floor((w.net_pnl || 0) * 10) + (totalTrades * 10);
+    const level = Math.floor(xp / 500) + 1;
+    let streak = 0;
+    const sortedTrades = [...trades].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    for (const t of sortedTrades) {
+      if (t.status === 'CLOSED' && (t.pnl || 0) > 0) streak++;
+      else if (t.status === 'CLOSED') break;
+    }
+    return { xp, level, rank: 0, streak, xpToNextLevel: (level * 500) - xp, xpProgress: (xp % 500) / 5, totalTrades, winRate };
+  } catch { return MOCK_USER_STATS; }
+}
+
+// Intern 5: replace with → fetch(`${BASE}/api/user/achievements`)
+export async function getAchievements() {
+  try {
+    const wallet = getStoredWallet();
+    if (!wallet) return ACHIEVEMENTS_DATA;
+    const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
+    const w = await res.json();
+    const trades = w.trades || [];
+    const totalTrades = trades.length;
+    const closedTrades = trades.filter(t => t.status === 'CLOSED');
+    const netPnl = w.net_pnl || 0;
+    let streak = 0;
+    const sortedTrades = [...trades].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    for (const t of sortedTrades) {
+      if (t.status === 'CLOSED' && (t.pnl || 0) > 0) streak++;
+      else if (t.status === 'CLOSED') break;
+    }
+    return ACHIEVEMENTS_DATA.map(a => {
+      let earned = false;
+      if (a.id === 'first') earned = totalTrades >= 1;
+      if (a.id === 'bullish') earned = netPnl > 0;
+      if (a.id === 'vip') earned = false;
+      if (a.id === 'moon') earned = totalTrades >= 1 && netPnl > 0;
+      if (a.id === 'contra') earned = false;
+      if (a.id === 'paper') earned = totalTrades >= 10;
+      if (a.id === 'onfire') earned = streak >= 5;
+      if (a.id === 'diamond') earned = closedTrades.length >= 5;
+      if (a.id === 'degen') earned = streak >= 10;
+      if (a.id === 'whale') earned = totalTrades >= 50;
+      return { ...a, earned };
+    });
+  } catch { return ACHIEVEMENTS_DATA; }
+>>>>>>> cb9d82afafe3ae19e7383359b11d2847e14f3853
 }

@@ -10,6 +10,7 @@ from services.backend.api.advice import router as advice_router
 from services.backend.api.leaderboard import router as leaderboard_router
 from services.backend.data.database import init_db
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Initializing Database...")
@@ -40,6 +41,11 @@ app.include_router(advice_router)
 app.include_router(advice_router, prefix="/api")
 app.include_router(leaderboard_router)
 app.include_router(leaderboard_router, prefix="/api")
+app.include_router(trades_router, prefix="/api")
+app.include_router(markets_router)
+app.include_router(signals_router)
+app.include_router(advice_router)
+
 
 @app.get("/")
 def root():
