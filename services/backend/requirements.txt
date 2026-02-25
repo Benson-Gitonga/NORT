@@ -4,6 +4,7 @@ sqlmodel       # Combines SQLAlchemy and Pydantic for the database
 python-dotenv  # To manage your .env file
 httpx          # To fetch data from the Polymarket API
 duckduckgo-search    # DuckDuckGo Search API for fetching market descriptions
+duckduckgo-search
 fastapi          # The backend framework
 uvicorn          # The server to run FastAPI
 sqlmodel         # Combines SQLAlchemy and Pydantic for the database

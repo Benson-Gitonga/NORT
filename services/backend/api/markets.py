@@ -97,22 +97,32 @@ def sync_markets(session: Session):
 
 # Remove duplicate @router.get("/markets") at bottom - KEEP ONLY THIS:
 
-@router.get("/")  # This becomes /markets/
-
 @router.get("/")
-def get_markets():
+def get_markets(
+    limit: int = 20,        # ← ADD THIS
+    sort_by: str = "volume" # ← OPTIONAL: volume, avg_volume
+):
     with Session(engine) as session:
         if not cache_is_fresh(session):
             print("Cache empty — syncing from Polymarket...")
             sync_markets(session)
 
+        # Add LIMIT and ORDER BY
         statement = select(Market).where(Market.is_active == True)
-        markets = session.exec(statement).all()
+        if sort_by == "volume":
+            statement = statement.order_by(Market.volume.desc())
+        elif sort_by == "avg_volume":
+            statement = statement.order_by(Market.avg_volume.desc())
+            
+        statement = statement.limit(limit)  # ← CRITICAL FIX
+        
+        markets = session.execute(statement).scalars().all()
         return {
             "markets": [market_to_response(m) for m in markets],
             "count": len(markets),
             "cached_at": datetime.utcnow().isoformat()
         }
+
 
 @router.get("/{market_id}")
 def get_market(market_id: str):
@@ -133,15 +143,9 @@ def refresh_markets():
 # ─────────────────────────────────────────────
 
 def market_to_response(market: Market) -> dict:
-    return {
-        "id":            market.id,
-        "question":      market.question,
-        "category":      market.category,
-        "current_odds":  market.current_odds,
-        "previous_odds": market.previous_odds,
-        "volume":        market.volume,
-        "avg_volume":    market.avg_volume,
-        "is_active":     market.is_active,
-        "expires_at":    str(market.expires_at),
-    }
+    # Short summary format for Telegram
+    line = f"`{market.id[:8]}` {market.question[:80]}...\n"
+    line += f"Yes: ${market.current_odds:.0%} | Vol: ${market.volume:,.0f}"
+    return {"summary": line}
+
 

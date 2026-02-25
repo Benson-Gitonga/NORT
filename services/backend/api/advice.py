@@ -1,5 +1,6 @@
 import json
 import httpx
+import os
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 
 # OpenClaw gateway
 OPENCLAW_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENCLAW_TOKEN = "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"
+OPENCLAW_TOKEN = os.getenv("OPENCLAW_TOKEN", "")
 
 # ─────────────────────────────────────────────────────────────
 # x402 PAYMENT CACHE (NEW)
