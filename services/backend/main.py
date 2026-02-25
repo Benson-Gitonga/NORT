@@ -55,7 +55,7 @@ app.include_router(leaderboard_router)
 app.include_router(leaderboard_router, prefix="/api")
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"status": "online", "message": "NORT Backend is active."}
 
