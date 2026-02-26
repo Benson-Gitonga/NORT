@@ -10,9 +10,7 @@ from typing import List
 
 from services.backend.data.database import engine
 from services.backend.data.models import Market
-from services.backend.core.polymarket import fetch_markets, parse_market
-import httpx
-import os
+from services.backend.core.polymarket import fetch_short_term_crypto_markets, parse_market
 
 router = APIRouter(prefix="/markets", tags=["Markets"], redirect_slashes=False)
 
@@ -39,51 +37,38 @@ def cache_is_fresh(session: Session) -> bool:
 
 def sync_markets(session: Session):
     """
-    Fetches fresh markets from Polymarket API and upserts into SQLite.
-    Called when cache is stale or empty.
+    Fetches short-term crypto markets (5min/15min/1hr) from Polymarket
+    and upserts them into the database.
     """
-    url = f"{os.getenv('POLYMARKET_API_URL', 'https://gamma-api.polymarket.com')}/markets"
-    params = {"active": "true", "closed": "false", "limit": 100}
+    fresh_markets = fetch_short_term_crypto_markets(limit=200)
 
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url, params=params)
-            response.raise_for_status()
-            raw_markets = response.json()
-    except Exception as e:
-        print(f"Polymarket API error: {e}")
-        return  # fail silently — return cached data if available
+    if not fresh_markets:
+        print("[sync] No short-term crypto markets returned from Polymarket.")
+        return
 
-    import json
-    for item in raw_markets:
+    for parsed in fresh_markets:
         try:
-            parsed = parse_market(item)
             if not parsed or not parsed["id"]:
                 continue
 
-            # Check if market already exists
             existing = session.get(Market, parsed["id"])
-
             if existing:
-                # Save current price as previous before updating
-                # This is what powers momentum scoring
                 existing.previous_odds = existing.current_odds
                 existing.current_odds  = parsed["current_odds"]
                 existing.volume        = parsed["volume"]
-                # Rolling average: 80% old + 20% new keeps baseline stable
                 existing.avg_volume    = (existing.avg_volume * 0.8) + (parsed["volume"] * 0.2)
                 existing.is_active     = parsed["is_active"]
                 session.add(existing)
             else:
-                # New market — insert it
                 market = Market(**parsed)
                 session.add(market)
 
         except Exception as e:
-            print(f"Skipping market {item.get('id')}: {e}")
+            print(f"[sync] Skipping market {parsed.get('id')}: {e}")
             continue
 
     session.commit()
+    print(f"[sync] Synced {len(fresh_markets)} short-term crypto markets.")
 
 
 # ─────────────────────────────────────────────
