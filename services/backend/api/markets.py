@@ -1,8 +1,7 @@
 # markets.py
 from fastapi import APIRouter, HTTPException
-from sqlmodel import Session, select, delete
+from sqlmodel import Session, select, text
 from datetime import datetime
-from typing import List
 
 from services.backend.data.database import engine
 from services.backend.data.models import Market
@@ -12,17 +11,21 @@ router = APIRouter(prefix="/markets", tags=["Markets"], redirect_slashes=False)
 
 
 def sync_markets(session: Session = None):
-    """Wipes old markets and replaces with fresh crypto markets from Polymarket."""
+    """Fetch crypto markets from Polymarket and upsert into DB."""
     fresh_markets = fetch_short_term_crypto_markets(limit=300)
 
     if not fresh_markets:
-        print("[sync] No markets returned from Polymarket — keeping existing DB data.")
+        print("[sync] No markets returned from Polymarket.")
         return
 
-    # Use provided session or create one
     def _do_sync(s):
-        s.exec(delete(Market))
+        # Mark all existing markets inactive first
+        existing = s.exec(select(Market)).all()
+        for m in existing:
+            m.is_active = False
+            s.add(m)
         s.commit()
+
         saved = 0
         for parsed in fresh_markets:
             try:
@@ -30,12 +33,27 @@ def sync_markets(session: Session = None):
                     continue
                 parsed["category"] = parsed.get("category") or "Crypto"
                 parsed["question"] = parsed.get("question") or "Unknown"
-                s.add(Market(**parsed))
+                parsed["expires_at"] = parsed.get("expires_at") or datetime(2099, 1, 1)
+
+                existing_market = s.get(Market, str(parsed["id"]))
+                if existing_market:
+                    existing_market.question      = parsed["question"]
+                    existing_market.category      = parsed["category"]
+                    existing_market.previous_odds = existing_market.current_odds
+                    existing_market.current_odds  = parsed["current_odds"]
+                    existing_market.volume        = parsed["volume"]
+                    existing_market.avg_volume    = parsed["avg_volume"]
+                    existing_market.is_active     = True
+                    existing_market.expires_at    = parsed["expires_at"]
+                    s.add(existing_market)
+                else:
+                    s.add(Market(**parsed))
                 saved += 1
             except Exception as e:
-                print(f"[sync] Skipping market {parsed.get('id')}: {e}")
+                print(f"[sync] Skipping {parsed.get('id')}: {e}")
+
         s.commit()
-        print(f"[sync] Saved {saved} crypto markets to DB.")
+        print(f"[sync] Upserted {saved} crypto markets.")
 
     if session:
         _do_sync(session)
@@ -54,11 +72,7 @@ def refresh_markets():
 
 @router.get("/debug-polymarket")
 def debug_polymarket():
-    """
-    Calls Polymarket Events API directly and shows what we'd store.
-    Useful to verify the crypto filter is working before a full sync.
-    """
-    from services.backend.core.polymarket import fetch_short_term_crypto_markets
+    """Calls Polymarket directly and shows what the filter returns — no DB write."""
     markets = fetch_short_term_crypto_markets(limit=50)
     return {
         "count": len(markets),
@@ -68,6 +82,7 @@ def debug_polymarket():
                 "question": (m.get("question") or "")[:100],
                 "category": m.get("category"),
                 "volume":   m.get("volume"),
+                "odds":     m.get("current_odds"),
             }
             for m in markets[:10]
         ]
@@ -78,9 +93,9 @@ def debug_polymarket():
 def get_markets(limit: int = 100, sort_by: str = "volume"):
     with Session(engine) as session:
         # Auto-sync if DB is empty
-        count = len(session.exec(select(Market)).all())
-        if count == 0:
-            print("[markets] DB empty — syncing from Polymarket...")
+        total = len(session.exec(select(Market)).all())
+        if total == 0:
+            print("[markets] DB empty — syncing...")
             sync_markets(session)
 
         statement = select(Market).where(Market.is_active == True)
