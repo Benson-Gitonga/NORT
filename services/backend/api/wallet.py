@@ -13,6 +13,14 @@ import hmac
 import json
 import hashlib
 
+# Validate required env vars at import time so the problem is obvious at startup
+def _check_env():
+    missing = [v for v in ["PRIVY_WEBHOOK_SECRET"] if not os.getenv(v)]
+    if missing:
+        print(f"[wallet] WARNING: missing env vars: {', '.join(missing)}. "
+              f"Privy webhook will reject all requests until these are set.")
+_check_env()
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
@@ -90,14 +98,19 @@ async def privy_webhook(
     body = await request.body()
 
     privy_signature = request.headers.get("privy-signature", "")
-    webhook_secret = os.getenv("PRIVY_WEBHOOK_SECRET", "")
+    webhook_secret  = os.getenv("PRIVY_WEBHOOK_SECRET", "")
 
     if not webhook_secret:
-        raise HTTPException(status_code=500, detail="PRIVY_WEBHOOK_SECRET not set in .env")
+        raise HTTPException(status_code=500, detail="PRIVY_WEBHOOK_SECRET not set in environment.")
 
-    expected = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+    # hmac.new() is the correct Python 3 call (not hmac.HMAC directly).
+    # digestmod must be passed as a callable (hashlib.sha256), not as a string.
+    expected = hmac.new(webhook_secret.encode(), body, digestmod=hashlib.sha256).hexdigest()
 
-    if not hmac.compare_digest(privy_signature, expected):
+    # Privy sends the signature as "sha256=<hex>" — strip the prefix if present
+    sig_to_compare = privy_signature.removeprefix("sha256=")
+
+    if not hmac.compare_digest(sig_to_compare, expected):
         raise HTTPException(status_code=401, detail="Invalid Privy webhook signature.")
 
     try:
