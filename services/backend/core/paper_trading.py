@@ -1,14 +1,19 @@
 """
 Core paper trading logic for NORT.
 
-P&L mirrors real Polymarket:
-  Buy N shares at price P  -> cost = N * P
-  WIN  -> payout = N * 1.00,  P&L = payout - cost
-  LOSS -> payout = 0,         P&L = -cost
+How Polymarket mechanics work (what we simulate):
+  YES price + NO price = $1.00 always
+  - Buy N YES shares at 60c  → cost = N * 0.60
+  - Price moves to 75c       → current value = N * 0.75
+  - Sell early               → payout = N * current_price, P&L = payout - cost
+  - Market resolves YES      → payout = N * $1.00,         P&L = payout - cost
+  - Market resolves NO       → payout = $0,                P&L = -cost
 
-Settlement is triggered automatically on every wallet/summary fetch.
-Trades on markets that expired 7+ days ago without resolution are
-force-closed at current market odds (simulates selling your position).
+Settlement happens two ways:
+  1. User sells early (sell_trade) — exits at current market price
+  2. Market resolves (settle_trade) — payout at $1 or $0
+
+Auto-settlement runs on every wallet/summary fetch.
 """
 
 import hashlib
@@ -16,7 +21,7 @@ import time
 import httpx
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 from sqlmodel import Session, select
 
@@ -76,7 +81,7 @@ def get_user_by_telegram(telegram_id, session):
     return session.exec(select(User).where(User.telegram_id == str(telegram_id))).first()
 
 
-# ─── PLACE A PAPER TRADE ─────────────────────────────────────────────────────
+# ─── PLACE A BUY TRADE ───────────────────────────────────────────────────────
 
 def place_paper_trade(telegram_user_id, market_id, market_question, outcome,
                       shares, price_per_share, direction, session):
@@ -124,13 +129,120 @@ def place_paper_trade(telegram_user_id, market_id, market_question, outcome,
     return trade
 
 
-# ─── MARKET RESOLUTION ───────────────────────────────────────────────────────
+# ─── SELL A POSITION (exit early at current market price) ────────────────────
+
+def sell_trade(trade_id, session):
+    """
+    Sell an open position at the current market price.
+
+    This mirrors how Polymarket lets you exit any time:
+      - current_price = live YES or NO odds from our DB
+      - payout = shares * current_price
+      - P&L = payout - original_cost
+
+    If we can't get live odds (market not in DB), we use last known price.
+    """
+    trade = session.get(PaperTrade, trade_id)
+    if not trade:
+        raise ValueError(f"Trade {trade_id} not found.")
+    if trade.status != "OPEN":
+        raise ValueError(f"Trade {trade_id} is already {trade.status} — cannot sell.")
+
+    # Get the current market price for this outcome
+    market = session.get(Market, str(trade.market_id))
+    if market:
+        # YES price = current_odds, NO price = 1 - current_odds
+        if trade.outcome == "YES":
+            current_price = float(market.current_odds)
+        else:
+            current_price = round(1.0 - float(market.current_odds), 6)
+    else:
+        # Market not in our DB — fall back to entry price (break-even sell)
+        current_price = trade.price_per_share
+
+    # Clamp to valid range
+    current_price = min(0.99, max(0.01, current_price))
+
+    payout = round(trade.shares * current_price, 6)
+    pnl    = round(payout - trade.total_cost, 6)
+
+    # Close the trade
+    trade.status    = "CLOSED"
+    trade.pnl       = pnl
+    trade.closed_at = datetime.utcnow()
+    session.add(trade)
+
+    # Return payout to wallet
+    config = session.exec(
+        select(WalletConfig).where(WalletConfig.telegram_user_id == trade.telegram_user_id)
+    ).first()
+    if config:
+        config.paper_balance = round(config.paper_balance + payout, 6)
+        config.updated_at    = datetime.utcnow()
+        session.add(config)
+
+    session.commit()
+
+    return {
+        "trade_id":        trade_id,
+        "market_id":       trade.market_id,
+        "market_question": trade.market_question,
+        "outcome":         trade.outcome,
+        "shares":          trade.shares,
+        "entry_price":     trade.price_per_share,
+        "sell_price":      current_price,
+        "cost":            trade.total_cost,
+        "payout":          payout,
+        "pnl":             pnl,
+        "result":          "SOLD",
+        "status":          "CLOSED",
+        "closed_at":       trade.closed_at.isoformat(),
+    }
+
+
+def get_position_value(trade_id, session):
+    """
+    Return the current mark-to-market value of an open position.
+    Used by the frontend to show live P&L before the user decides to sell.
+    """
+    trade = session.get(PaperTrade, trade_id)
+    if not trade:
+        raise ValueError(f"Trade {trade_id} not found.")
+
+    market = session.get(Market, str(trade.market_id))
+    if market:
+        if trade.outcome == "YES":
+            current_price = float(market.current_odds)
+        else:
+            current_price = round(1.0 - float(market.current_odds), 6)
+    else:
+        current_price = trade.price_per_share
+
+    current_price = min(0.99, max(0.01, current_price))
+    current_value = round(trade.shares * current_price, 2)
+    unrealized_pnl = round(current_value - trade.total_cost, 2)
+    pnl_pct = round((unrealized_pnl / trade.total_cost) * 100, 1) if trade.total_cost else 0
+
+    return {
+        "trade_id":        trade_id,
+        "market_id":       trade.market_id,
+        "market_question": trade.market_question,
+        "outcome":         trade.outcome,
+        "shares":          trade.shares,
+        "entry_price":     trade.price_per_share,
+        "current_price":   current_price,
+        "entry_value":     trade.total_cost,
+        "current_value":   current_value,
+        "unrealized_pnl":  unrealized_pnl,
+        "pnl_pct":         pnl_pct,
+        "status":          trade.status,
+    }
+
+
+# ─── MARKET RESOLUTION (auto-settle on expiry) ───────────────────────────────
 
 def _get_market_resolution(market_id):
-    """
-    Ask Polymarket gamma-api if a market has resolved.
-    Returns "YES", "NO", or None (still open / unreachable).
-    """
+    """Query Polymarket for final resolution. Returns 'YES', 'NO', or None."""
     try:
         url = f"{os.getenv('POLYMARKET_API_URL', 'https://gamma-api.polymarket.com')}/markets/{market_id}"
         with httpx.Client(timeout=10.0) as client:
@@ -151,30 +263,20 @@ def _get_market_resolution(market_id):
         for i, price in enumerate(prices):
             if price >= 0.99:
                 return outcomes[i] if i < len(outcomes) else ("YES" if i == 0 else "NO")
-
         return None
     except Exception as e:
         print(f"[settle] resolution fetch failed for {market_id}: {e}")
         return None
 
 
-def _get_current_odds(market_id, session):
-    """Return the current YES probability from our local DB cache."""
-    market = session.get(Market, str(market_id))
-    return market.current_odds if market else None
-
-
-# ─── SETTLE ONE TRADE ────────────────────────────────────────────────────────
+# ─── AUTO-SETTLE RESOLVED/EXPIRED MARKETS ────────────────────────────────────
 
 def settle_trade(trade_id, session):
     """
-    Settle one trade against the real Polymarket result.
-
-    WIN      -> outcome matches resolution   -> payout = shares * $1.00
-    LOSS     -> outcome wrong                -> payout = $0
-    EXPIRED  -> market closed 7+ days ago,
-                no resolution found         -> sell at current odds (partial recovery)
-    OPEN     -> market still running        -> no change
+    Settle one trade against the real Polymarket resolution.
+    WIN  → shares * $1.00
+    LOSS → $0
+    EXPIRED (7+ days, no resolution) → sell at current odds
     """
     trade = session.get(PaperTrade, trade_id)
     if not trade:
@@ -186,21 +288,19 @@ def settle_trade(trade_id, session):
     resolution = _get_market_resolution(trade.market_id)
 
     if resolution is None:
-        # Check if the trade has been sitting open for 7+ days
         age_days = (datetime.utcnow() - trade.created_at).days
         if age_days < 7:
             return {"trade_id": trade_id, "status": "OPEN",
                     "pnl": None, "message": "Market not resolved yet."}
-
-        # Force-close: sell at current odds to simulate position exit
-        odds = _get_current_odds(trade.market_id, session)
-        if odds is not None:
-            current_price = odds if trade.outcome == "YES" else (1.0 - odds)
+        # Force-close expired trade at current odds
+        market = session.get(Market, str(trade.market_id))
+        if market:
+            current_price = float(market.current_odds) if trade.outcome == "YES" \
+                            else round(1.0 - float(market.current_odds), 6)
             payout = round(trade.shares * current_price, 6)
-            pnl    = round(payout - trade.total_cost, 6)
         else:
             payout = 0.0
-            pnl    = round(-trade.total_cost, 6)
+        pnl    = round(payout - trade.total_cost, 6)
         result = "EXPIRED"
     else:
         won = (trade.outcome == resolution)
@@ -213,13 +313,11 @@ def settle_trade(trade_id, session):
             pnl    = round(-trade.total_cost, 6)
             result = "LOSS"
 
-    # Persist
     trade.status    = "CLOSED"
     trade.pnl       = pnl
     trade.closed_at = datetime.utcnow()
     session.add(trade)
 
-    # Credit payout to wallet
     config = session.exec(
         select(WalletConfig).where(WalletConfig.telegram_user_id == trade.telegram_user_id)
     ).first()
@@ -231,23 +329,17 @@ def settle_trade(trade_id, session):
     session.commit()
 
     return {
-        "trade_id":        trade_id,
-        "market_id":       trade.market_id,
-        "market_question": trade.market_question,
-        "your_bet":        trade.outcome,
-        "market_resolved": resolution,
-        "result":          result,
-        "shares":          trade.shares,
-        "cost":            trade.total_cost,
-        "payout":          payout,
-        "pnl":             pnl,
-        "status":          "CLOSED",
-        "closed_at":       trade.closed_at.isoformat(),
+        "trade_id": trade_id, "market_id": trade.market_id,
+        "market_question": trade.market_question, "your_bet": trade.outcome,
+        "market_resolved": resolution, "result": result,
+        "shares": trade.shares, "cost": trade.total_cost,
+        "payout": payout, "pnl": pnl,
+        "status": "CLOSED", "closed_at": trade.closed_at.isoformat(),
     }
 
 
 def settle_all_open_trades(telegram_user_id, session):
-    """Settle every open trade for a user. Called automatically on wallet/summary."""
+    """Auto-settle resolved/expired trades. Called on every wallet/summary."""
     open_trades = session.exec(
         select(PaperTrade).where(
             PaperTrade.telegram_user_id == str(telegram_user_id),
@@ -260,7 +352,6 @@ def settle_all_open_trades(telegram_user_id, session):
 # ─── WALLET SUMMARY ──────────────────────────────────────────────────────────
 
 def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
-    # Resolve telegram_user_id
     if wallet_address and not telegram_user_id:
         wallet_address = wallet_address.lower()
         user = get_user_by_wallet(wallet_address, session)
@@ -272,9 +363,7 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
     if not telegram_user_id:
         raise ValueError("Could not resolve a telegram_user_id.")
 
-    # Auto-settle any resolved or expired trades before returning
     settle_all_open_trades(telegram_user_id, session)
-
     config = _ensure_wallet_config(telegram_user_id, session)
 
     trades = session.exec(
@@ -288,12 +377,57 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
     wins          = [t for t in closed_trades if (t.pnl or 0) > 0]
     losses        = [t for t in closed_trades if (t.pnl or 0) < 0]
 
-    open_cost  = round(sum(t.total_cost for t in open_trades), 2)
-    total_val  = round(config.paper_balance + open_cost, 2)
-    # net_pnl: paper_balance already includes settled payouts — just compare vs start
-    net_pnl    = round(total_val - config.total_deposited, 2)
+    open_cost   = round(sum(t.total_cost for t in open_trades), 2)
+    total_val   = round(config.paper_balance + open_cost, 2)
+    net_pnl     = round(total_val - config.total_deposited, 2)
     net_pnl_pct = round((net_pnl / config.total_deposited) * 100, 2) if config.total_deposited else 0
-    win_rate   = round((len(wins) / len(closed_trades)) * 100, 1) if closed_trades else 0.0
+    win_rate    = round((len(wins) / len(closed_trades)) * 100, 1) if closed_trades else 0.0
+
+    # For open trades, attach current mark-to-market value
+    def _open_trade_dict(t):
+        market = session.get(Market, str(t.market_id))
+        if market:
+            cur_price = float(market.current_odds) if t.outcome == "YES" \
+                        else round(1.0 - float(market.current_odds), 6)
+        else:
+            cur_price = t.price_per_share
+        cur_price = min(0.99, max(0.01, cur_price))
+        cur_value = round(t.shares * cur_price, 2)
+        unr_pnl   = round(cur_value - t.total_cost, 2)
+        return {
+            "id": t.id, "market_id": t.market_id,
+            "market_question": t.market_question,
+            "outcome": t.outcome, "direction": t.direction,
+            "shares": t.shares, "price_per_share": t.price_per_share,
+            "total_cost": t.total_cost, "status": t.status,
+            "result": "OPEN",
+            "current_price": cur_price,
+            "current_value": cur_value,
+            "unrealized_pnl": unr_pnl,
+            "pnl": unr_pnl,          # show live P&L for open trades
+            "pnl_display": _fmt_pnl(unr_pnl),
+            "tx_hash": t.tx_hash,
+            "closed_at": None,
+            "created_at": t.created_at.isoformat(),
+        }
+
+    def _closed_trade_dict(t):
+        return {
+            "id": t.id, "market_id": t.market_id,
+            "market_question": t.market_question,
+            "outcome": t.outcome, "direction": t.direction,
+            "shares": t.shares, "price_per_share": t.price_per_share,
+            "total_cost": t.total_cost, "status": t.status,
+            "result": _result_label(t),
+            "current_price": None,
+            "current_value": None,
+            "unrealized_pnl": None,
+            "pnl": t.pnl,
+            "pnl_display": _fmt_pnl(t.pnl),
+            "tx_hash": t.tx_hash,
+            "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+            "created_at": t.created_at.isoformat(),
+        }
 
     return {
         "wallet_address":        wallet_address,
@@ -309,26 +443,8 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
         "wins":                  len(wins),
         "losses":                len(losses),
         "win_rate_pct":          win_rate,
-        "trades": [
-            {
-                "id":              t.id,
-                "market_id":       t.market_id,
-                "market_question": t.market_question,
-                "outcome":         t.outcome,
-                "direction":       t.direction,
-                "shares":          t.shares,
-                "price_per_share": t.price_per_share,
-                "total_cost":      t.total_cost,
-                "status":          t.status,
-                "result":          _result_label(t),
-                "pnl":             t.pnl,
-                "pnl_display":     _fmt_pnl(t.pnl),
-                "tx_hash":         t.tx_hash,
-                "closed_at":       t.closed_at.isoformat() if t.closed_at else None,
-                "created_at":      t.created_at.isoformat(),
-            }
-            for t in trades
-        ],
+        "trades": [_open_trade_dict(t) for t in open_trades] +
+                  [_closed_trade_dict(t) for t in closed_trades],
     }
 
 

@@ -266,26 +266,40 @@ export async function getTrades() {
   if (!res.ok) throw new Error(`Trades fetch failed: ${res.status}`);
   const w = await res.json();
   return (w.trades || []).map(t => ({
-    id:      t.id,
-    q:       t.market_question,
-    side:    (t.outcome || 'YES').toLowerCase(),
-    amount:  Math.round((t.total_cost  || 0) * 100) / 100,
-    price:   t.price_per_share || 0,
-    status:  (t.status || 'OPEN').toLowerCase(),
-    pnl:     t.pnl || 0,
-    txHash:  t.tx_hash || null,
+    id:            t.id,
+    marketId:      t.market_id,
+    q:             t.market_question,
+    side:          (t.outcome || 'YES').toLowerCase(),
+    shares:        t.shares || 0,
+    amount:        Math.round((t.total_cost || 0) * 100) / 100,
+    price:         t.price_per_share || 0,
+    currentPrice:  t.current_price ?? null,
+    currentValue:  t.current_value ?? null,
+    unrealizedPnl: t.unrealized_pnl ?? null,
+    status:        (t.status || 'OPEN').toLowerCase(),
+    result:        t.result || 'OPEN',
+    pnl:           t.pnl ?? 0,
+    txHash:        t.tx_hash || null,
   }));
 }
 
-export async function commitTrade(tradeId) {
-  const res = await fetch(`${BASE}/api/trade/commit`, {
+export async function getPositionValue(tradeId) {
+  const res = await fetch(`${BASE}/api/trade/value/${tradeId}`);
+  if (!res.ok) throw new Error(`Position value fetch failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function sellTrade(tradeId) {
+  const res = await fetch(`${BASE}/api/trade/sell/${tradeId}`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ trade_id: tradeId }),
   });
-  if (!res.ok) throw new Error(`Commit failed: ${res.status}`);
-  const r = await res.json();
-  return { ok: true, txHash: r.tx_hash || null };
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).detail || ''; } catch {}
+    throw new Error(`Sell failed (${res.status}): ${detail}`);
+  }
+  return await res.json();
 }
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
