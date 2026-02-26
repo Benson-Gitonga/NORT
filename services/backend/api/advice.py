@@ -7,14 +7,17 @@ from pydantic import BaseModel
 from typing import Optional
 from tavily import TavilyClient
 from dotenv import load_dotenv
+from sqlmodel import Session, select
 
 load_dotenv()
 
 from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
+from services.backend.data.database import engine
+from services.backend.data.models import Market, AISignal
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
-OPENCLAW_URL  = os.getenv("OPENCLAW_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENCLAW_URL   = os.getenv("OPENCLAW_URL", "https://openrouter.ai/api/v1/chat/completions")
 OPENCLAW_TOKEN = os.getenv("OPENCLAW_TOKEN", "").strip()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
@@ -40,17 +43,9 @@ class AdviceResponse(BaseModel):
 
 # ─────────────────────────────────────────────────────────────
 # Tavily Search
-#
-# Proper search API — no scraping, no hanging, works from Render.
-# Free tier: 1,000 queries/month.
-# Replaces DuckDuckGo which was hanging due to bot detection.
 # ─────────────────────────────────────────────────────────────
 
 def tavily_search(query: str, max_results: int = 5) -> str:
-    """
-    Run a Tavily search and return formatted snippets.
-    Returns a fallback string on any failure — never crashes.
-    """
     try:
         client = TavilyClient(api_key=TAVILY_API_KEY)
         response = client.search(query, max_results=max_results)
@@ -63,28 +58,12 @@ def tavily_search(query: str, max_results: int = 5) -> str:
         return "Search unavailable."
 
 # ─────────────────────────────────────────────────────────────
-# Search Pre-Fetch
-#
-# Fires 3 Tavily searches in parallel BEFORE calling OpenClaw:
-#   1. News    — recent articles, odds, analyst takes
-#   2. Social  — Reddit/Twitter sentiment and buzz
-#   3. Context — background, resolution criteria, history
-#
-# All three run concurrently via asyncio.gather so total time
-# = slowest single query, not all three combined.
-#
-# Results are injected directly into the OpenClaw prompt so
-# the model has real-world context before it starts analyzing.
+# Search Pre-Fetch — 3 parallel Tavily searches
 # ─────────────────────────────────────────────────────────────
 
 async def search_prefetch(market_question: str) -> dict:
-    """
-    Fires 3 Tavily searches in parallel and returns all results.
-    Hard capped at 15 seconds total via asyncio.wait_for.
-    """
     loop = asyncio.get_event_loop()
 
-    # Build the three targeted query strings
     news_query    = f'"{market_question}" odds OR prediction OR analyst 2026'
     social_query  = f'"{market_question}" reddit OR twitter OR sentiment OR community opinion'
     context_query = f'"{market_question}" explained OR background OR history OR resolution'
@@ -93,8 +72,6 @@ async def search_prefetch(market_question: str) -> dict:
     print(f"[Search] Social:  {social_query}")
     print(f"[Search] Context: {context_query}")
 
-    # Run all three concurrently in thread executor
-    # (Tavily is blocking I/O — run_in_executor keeps FastAPI event loop free)
     news_task    = loop.run_in_executor(None, tavily_search, news_query,    6)
     social_task  = loop.run_in_executor(None, tavily_search, social_query,  5)
     context_task = loop.run_in_executor(None, tavily_search, context_query, 4)
@@ -126,15 +103,7 @@ async def search_prefetch(market_question: str) -> dict:
     }
 
 # ─────────────────────────────────────────────────────────────
-# OpenClaw Caller
-#
-# Single-shot call — no tool loop.
-# OpenClaw receives everything in one enriched prompt:
-#   - Market data + AI signal from SQLite
-#   - Tavily news results
-#   - Tavily social/sentiment results
-#   - Tavily background/context results
-# It just needs to analyze and return JSON.
+# OpenClaw Caller — single-shot enriched prompt
 # ─────────────────────────────────────────────────────────────
 
 async def call_openclaw(
@@ -144,10 +113,6 @@ async def call_openclaw(
     market_signal: dict,
     search_context: dict
 ) -> str:
-    """
-    Sends one enriched prompt to OpenClaw containing all available context.
-    Returns the raw text response for parsing.
-    """
     if not OPENCLAW_TOKEN:
         raise HTTPException(status_code=503, detail="Missing OPENCLAW_TOKEN in .env")
 
@@ -155,7 +120,7 @@ async def call_openclaw(
 
 MARKET QUESTION: {market_question}
 
-━━━ MARKET DATA (SQLite) ━━━
+━━━ MARKET DATA (Neon) ━━━
 {json.dumps(market_data, indent=2)}
 
 ━━━ AI SIGNAL FOR THIS MARKET ━━━
@@ -214,7 +179,6 @@ Return JSON only. The market_id field must be exactly: {market_id}
 
 @router.get("/advice/debug")
 async def debug_openclaw():
-    """Fire a full pipeline test with a real question."""
     market_question = "Will MicroStrategy sell any Bitcoin in 2025?"
     search_context = await search_prefetch(market_question)
     raw = await call_openclaw(
@@ -227,11 +191,10 @@ async def debug_openclaw():
     return {"raw": raw, "search_context": search_context}
 
 # ─────────────────────────────────────────────────────────────
-# LLM Response Parser (Safety Layer)
+# LLM Response Parser
 # ─────────────────────────────────────────────────────────────
 
 def parse_response(raw: str, market_id: str, tool_calls_used: list[str]) -> AdviceResponse:
-    """Parse raw LLM output into a validated AdviceResponse."""
     cleaned = raw.strip()
 
     if cleaned.startswith("```"):
@@ -278,47 +241,75 @@ def parse_response(raw: str, market_id: str, tool_calls_used: list[str]) -> Advi
     )
 
 # ─────────────────────────────────────────────────────────────
-# Data Fetchers
+# Data Fetchers — read directly from Neon via SQLModel
+#
+# Previously these called localhost:8000 which doesn't exist
+# on Render. Now they query the database directly using the
+# same engine that the rest of the app uses.
 # ─────────────────────────────────────────────────────────────
 
-async def fetch_market_data(market_id: str) -> dict:
+def fetch_market_data(market_id: str) -> dict:
+    """
+    Fetch a single market record directly from Neon by ID.
+    Returns a plain dict for JSON serialization.
+    """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(f"http://localhost:8000/markets/{market_id}")
-            if response.status_code == 200:
-                return response.json()
-            print(f"[Market] Status {response.status_code}")
+        with Session(engine) as session:
+            market = session.get(Market, market_id)
+            if not market:
+                print(f"[Market] ID {market_id} not found in Neon")
+                return {}
+            return {
+                "id":             market.id,
+                "question":       market.question,
+                "category":       market.category,
+                "current_odds":   market.current_odds,
+                "previous_odds":  market.previous_odds,
+                "volume":         market.volume,
+                "avg_volume":     market.avg_volume,
+                "is_active":      market.is_active,
+                "expires_at":     str(market.expires_at) if market.expires_at else None,
+            }
     except Exception as e:
         import traceback
-        print(f"[Market] Fetch failed: {e}\n{traceback.format_exc()}")
-    return {}
+        print(f"[Market] Neon fetch failed: {e}\n{traceback.format_exc()}")
+        return {}
 
-async def fetch_signals() -> dict:
+
+def fetch_market_signal(market_id: str) -> dict:
+    """
+    Fetch the AI signal for a specific market directly from Neon.
+    Returns the most recent signal record or an empty dict.
+    """
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get("http://localhost:8000/signals/?top=20")
-            if response.status_code == 200:
-                return response.json()
+        with Session(engine) as session:
+            statement = (
+                select(AISignal)
+                .where(AISignal.market_id == market_id)
+                .order_by(AISignal.timestamp.desc())
+                .limit(1)
+            )
+            signal = session.exec(statement).first()
+            if not signal:
+                print(f"[Signal] No signal found for market {market_id}")
+                return {}
+            return {
+                "market_id":        signal.market_id,
+                "prediction":       signal.prediction,
+                "confidence_score": signal.confidence_score,
+                "analysis_summary": signal.analysis_summary,
+                "timestamp":        str(signal.timestamp) if signal.timestamp else None,
+            }
     except Exception as e:
         import traceback
-        print(f"[Signals] Fetch failed: {e}\n{traceback.format_exc()}")
-    return {}
-
-def extract_market_signal(signals_data: dict, market_id: str) -> dict:
-    try:
-        items = signals_data if isinstance(signals_data, list) else signals_data.get("signals", [])
-        for item in items:
-            if str(item.get("id")) == str(market_id) or str(item.get("market_id")) == str(market_id):
-                return item
-    except Exception:
-        pass
-    return {}
+        print(f"[Signal] Neon fetch failed: {e}\n{traceback.format_exc()}")
+        return {}
 
 # ─────────────────────────────────────────────────────────────
 # MAIN ENDPOINT
 #
 # Flow:
-#   1. Fetch SQLite baseline (market data + AI signal)
+#   1. Fetch market data + AI signal directly from Neon
 #   2. Run 3 Tavily searches in parallel (news + social + context)
 #   3. Bundle everything into one enriched prompt
 #   4. Send to OpenClaw → single-shot analysis
@@ -329,10 +320,9 @@ def extract_market_signal(signals_data: dict, market_id: str) -> dict:
 async def get_advice(request: AdviceRequest):
     tool_calls_used: list[str] = []
 
-    # 1. Fetch SQLite baseline
-    market_data  = await fetch_market_data(request.market_id)
-    signals_data = await fetch_signals()
-    market_signal = extract_market_signal(signals_data, request.market_id)
+    # 1. Fetch directly from Neon — no localhost calls
+    market_data   = fetch_market_data(request.market_id)
+    market_signal = fetch_market_signal(request.market_id)
 
     # 2. Extract market question
     market_question = (
