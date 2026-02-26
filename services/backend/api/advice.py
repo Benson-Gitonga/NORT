@@ -2,41 +2,18 @@ import json
 import httpx
 import os
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
-from ddgs import DDGS
-from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
-# Prompt
-from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT, build_advice_user_prompt
+load_dotenv()
+
+from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
-# OpenClaw gateway
-OPENCLAW_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENCLAW_TOKEN = os.getenv("OPENCLAW_TOKEN", "")
-
-# ─────────────────────────────────────────────────────────────
-# x402 PAYMENT CACHE (NEW)
-# ─────────────────────────────────────────────────────────────
-# In production, use Redis or a database instead of in-memory dict
-
-payment_cache = {}
-
-def is_payment_verified(user_id: str) -> bool:
-    """Check if user has recently verified payment"""
-    if user_id not in payment_cache:
-        return False
-    expiry = payment_cache[user_id]
-    if datetime.now() > expiry:
-        del payment_cache[user_id]
-        return False
-    return True
-
-def cache_verified_payment(user_id: str, duration_hours: int = 24):
-    """Cache verified payment for user (duration_hours for re-verification)"""
-    payment_cache[user_id] = datetime.now() + timedelta(hours=duration_hours)
+OPENCLAW_URL = os.getenv("OPENCLAW_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENCLAW_TOKEN = os.getenv("OPENCLAW_TOKEN", "").strip()
 
 # ─────────────────────────────────────────────────────────────
 # Request / Response Models
@@ -46,7 +23,6 @@ class AdviceRequest(BaseModel):
     market_id: str
     telegram_id: Optional[str] = None
     premium: bool = False
-
 
 class AdviceResponse(BaseModel):
     market_id: str
@@ -59,45 +35,23 @@ class AdviceResponse(BaseModel):
     tool_calls_used: list[str]
     stale_data_warning: Optional[str] = None
 
-
-# ─────────────────────────────────────────────────────────────
-# Web Search (DuckDuckGo)
-# ─────────────────────────────────────────────────────────────
-
-def build_search_query(question: str) -> str:
-    stopwords = {
-        "will", "does", "is", "are", "the", "a", "an", "in", "of",
-        "by", "to", "than", "less", "more", "going", "be", "have",
-        "for", "this", "that", "with", "from", "and", "or", "not"
-    }
-    words = question.replace("?", "").replace(",", "").split()
-    keywords = [w for w in words if w.lower() not in stopwords and len(w) > 2]
-    return " ".join(keywords[:6])
-
-
-def fetch_news(query: str, max_results: int = 5) -> str:
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-        if not results:
-            return "No recent news found."
-        snippets = [f"- {r['title']}: {r['body']}" for r in results]
-        return "\n".join(snippets)
-    except Exception as e:
-        print(f"[DDG Search Error] {e}")
-        return "Web search unavailable."
-
-
 # ─────────────────────────────────────────────────────────────
 # OpenClaw Caller
+# Simple single-shot call to OpenClaw/OpenRouter.
+# No tool loop, no DDG — just sends the prompt and returns
+# the raw response for parsing.
 # ─────────────────────────────────────────────────────────────
 
 async def call_openclaw(system_prompt: str, user_prompt: str) -> str:
+    """Send a prompt to OpenClaw and return the raw text response."""
+    if not OPENCLAW_TOKEN:
+        raise HTTPException(status_code=503, detail="Missing OPENCLAW_TOKEN in .env")
+
     payload = {
         "model": "anthropic/claude-3-haiku",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user",   "content": user_prompt}
         ]
     }
 
@@ -116,38 +70,48 @@ async def call_openclaw(system_prompt: str, user_prompt: str) -> str:
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"]
+
         except httpx.ConnectError:
             raise HTTPException(status_code=503, detail="OpenClaw gateway unreachable")
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=503, detail=f"OpenClaw error {e.response.status_code}")
 
+# ─────────────────────────────────────────────────────────────
+# Debug Endpoint
+# ─────────────────────────────────────────────────────────────
 
 @router.get("/advice/debug")
 async def debug_openclaw():
+    """Fire a raw call to verify OpenClaw is reachable and responding."""
     raw = await call_openclaw(
         ADVICE_SYSTEM_PROMPT,
         "Analyze market 517310. Return JSON only."
     )
     return {"raw": raw}
 
-
 # ─────────────────────────────────────────────────────────────
 # LLM Response Parser (Safety Layer)
+# Strips markdown fences, extracts JSON, maps to AdviceResponse.
+# Falls back gracefully if parsing fails — never crashes.
 # ─────────────────────────────────────────────────────────────
 
 def parse_response(raw: str, market_id: str) -> AdviceResponse:
+    """Parse raw LLM output into a validated AdviceResponse."""
     cleaned = raw.strip()
-    start = cleaned.find("{")
-    end = cleaned.rfind("}") + 1
-    if start != -1 and end > start:
-        cleaned = cleaned[start:end]
 
-    if cleaned.startswith(""):
-        parts = cleaned.split("")
+    # Strip markdown code fences if present (```json ... ```)
+    if cleaned.startswith("```"):
+        parts = cleaned.split("```")
         cleaned = parts[1] if len(parts) > 1 else cleaned
         if cleaned.startswith("json"):
             cleaned = cleaned[4:]
         cleaned = cleaned.strip()
+
+    # Extract the JSON object even if there's surrounding text
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start != -1 and end > start:
+        cleaned = cleaned[start:end]
 
     try:
         data = json.loads(cleaned)
@@ -163,43 +127,43 @@ def parse_response(raw: str, market_id: str) -> AdviceResponse:
             tool_calls_used=["parse_failed"]
         )
 
+    # Validate suggested_plan — only allow known values
     valid_plans = {"BUY YES", "BUY NO", "WAIT"}
     suggested = str(data.get("suggested_plan", "WAIT")).upper().strip()
     if suggested not in valid_plans:
         suggested = "WAIT"
 
     return AdviceResponse(
-        market_id=market_id,  # Always use the real market_id, never trust LLM for this
+        market_id=market_id,
         summary=data.get("summary", ""),
         why_trending=data.get("why_trending", ""),
         risk_factors=data.get("risk_factors", []),
         suggested_plan=suggested,
         confidence=float(data.get("confidence", 0.5)),
         disclaimer="This is not financial advice. Paper trading only.",
-        tool_calls_used=["openclaw_agent", "duckduckgo_search"],
+        tool_calls_used=["openclaw_agent"],
         stale_data_warning=data.get("stale_data_warning")
     )
-
 
 # ─────────────────────────────────────────────────────────────
 # Data Fetchers
 # ─────────────────────────────────────────────────────────────
 
 async def fetch_market_data(market_id: str) -> dict:
+    """Fetch market record from the local /markets/ endpoint."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(f"http://localhost:8000/markets/{market_id}")
             if response.status_code == 200:
                 return response.json()
-            else:
-                print(f"[Market] Status {response.status_code}")
+            print(f"[Market] Status {response.status_code}")
     except Exception as e:
         import traceback
         print(f"[Market] Fetch failed: {e}\n{traceback.format_exc()}")
     return {}
 
-
 async def fetch_signals() -> dict:
+    """Fetch top AI signals from the local /signals/ endpoint."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get("http://localhost:8000/signals/?top=20")
@@ -210,9 +174,8 @@ async def fetch_signals() -> dict:
         print(f"[Signals] Fetch failed: {e}\n{traceback.format_exc()}")
     return {}
 
-
 def extract_market_signal(signals_data: dict, market_id: str) -> dict:
-    """Pull only the signal entry matching this market, if it exists."""
+    """Find the AI signal record matching this market_id."""
     try:
         items = signals_data if isinstance(signals_data, list) else signals_data.get("signals", [])
         for item in items:
@@ -222,50 +185,36 @@ def extract_market_signal(signals_data: dict, market_id: str) -> dict:
         pass
     return {}
 
-
 # ─────────────────────────────────────────────────────────────
-# MAIN ENDPOINT (WITH x402 PAYMENT GATE)
+# MAIN ENDPOINT
+#
+# Simple flow:
+#   1. Fetch SQLite baseline (market data + AI signal)
+#   2. Build prompt with all available context
+#   3. Send to OpenClaw → get JSON response
+#   4. Parse and return AdviceResponse
 # ─────────────────────────────────────────────────────────────
 
 @router.post("/advice", response_model=AdviceResponse)
 async def get_advice(request: AdviceRequest):
-    # ──────────────────────────────────────────
-    # x402 PAYMENT GATE (NEW)
-    # ──────────────────────────────────────────
-    if request.premium:
-        if not request.telegram_id:
-            raise HTTPException(status_code=400, detail="telegram_id required for premium")
-        
-        if not is_payment_verified(request.telegram_id):
-            # Return 402 Payment Required with x402 payment details
-            return JSONResponse(
-                status_code=402,
-                content={
-                    "amount": 0.05,
-                    "address": "0x...",  # TODO: Replace with your USDC wallet address on Base network
-                    "asset": "USDC"
-                }
-            )
-    # ──────────────────────────────────────────
-    
-    # 1. Fetch market data and signals
-    market_data = await fetch_market_data(request.market_id)
+
+    # 1. Fetch baseline data from SQLite
+    market_data  = await fetch_market_data(request.market_id)
     signals_data = await fetch_signals()
 
-    # 2. Extract only the signal for this specific market
+    # 2. Find and merge the AI signal for this market
     market_signal = extract_market_signal(signals_data, request.market_id)
 
-    # 3. Build focused search query
-    market_question = market_data.get("question", f"prediction market {request.market_id}")
-    search_query = build_search_query(market_question)
-    print(f"[DDG] Market question: {market_question}")
-    print(f"[DDG] Search query:    {search_query}")
+    # 3. Extract the market question
+    market_question = (
+        market_data.get("question") or
+        market_data.get("summary") or
+        f"prediction market {request.market_id}"
+    ).strip()
 
-    # 4. Fetch news
-    news_snippets = fetch_news(search_query, max_results=5)
-    print(f"[DDG] Results:\n{news_snippets}")
+    print(f"[Agent] Market {request.market_id}: {market_question}")
 
-    # 5. Build tightly focused prompt — one market only
+    # 4. Build the prompt
     user_message = f"""
 You are analyzing ONE specific prediction market. Focus only on this market.
 
@@ -278,59 +227,10 @@ MARKET DATA:
 SIGNAL FOR THIS MARKET:
 {json.dumps(market_signal, indent=2) if market_signal else "No signal data available."}
 
-RECENT NEWS (searched: "{search_query}"):
-{news_snippets}
-
 Return JSON only. The market_id field must be exactly: {request.market_id}
 """
 
+    # 5. Send to OpenClaw and parse response
     raw_response = await call_openclaw(ADVICE_SYSTEM_PROMPT, user_message)
     print(f"RAW RESPONSE: {raw_response}")
     return parse_response(raw_response, request.market_id)
-
-
-# ─────────────────────────────────────────────────────────────
-# x402 PAYMENT VERIFICATION ENDPOINT (NEW)
-# ─────────────────────────────────────────────────────────────
-
-@router.post("/x402/verify")
-async def verify_payment(request: dict):
-    """
-    Verify x402 payment transaction on Base network.
-    
-    Request body:
-    {
-        "proof": "<transaction_hash>",
-        "user_id": "<telegram_user_id>"
-    }
-    """
-    tx_hash = request.get("proof")
-    user_id = request.get("user_id")
-    
-    if not tx_hash or not user_id:
-        raise HTTPException(status_code=400, detail="Missing proof or user_id")
-    
-    print(f"[x402 Verify] TX: {tx_hash}, User: {user_id}")
-    
-    # TODO: Integrate with Base RPC to verify transaction
-    # For now, accept any valid-looking 64-char hex (crude validation)
-    if len(tx_hash) == 64 and all(c in '0123456789abcdefABCDEF' for c in tx_hash):
-        cache_verified_payment(user_id)
-        return {"success": True}
-    
-    return JSONResponse(
-        status_code=400,
-        content={"success": False, "reason": "Invalid transaction hash format"}
-    )
-
-
-@router.get("/markets")
-async def get_markets_mock():
-    return {
-        "markets": [
-            {"id": "521947", "question": "Will Trump deport <250k?", "yes_price": 0.35, "no_price": 0.65, "volume": 125000},
-            {"id": "549869", "question": "Bitcoin $100k by June?", "yes_price": 0.68, "no_price": 0.32, "volume": 89000}
-        ],
-        "count": 2,
-        "cached_at": "2026-02-24T22:00:00Z"
-    }
