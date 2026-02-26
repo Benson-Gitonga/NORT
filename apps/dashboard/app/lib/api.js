@@ -26,21 +26,37 @@ const getStoredWallet = () => {
 // ─── SIGNALS ─────────────────────────────────────────────────────────────────
 
 export async function getSignals(filter = 'all') {
-  const res = await fetch(`${BASE}/signals?top=20`);
-  if (!res.ok) throw new Error(`Signals fetch failed: ${res.status}`);
-  const data = await res.json();
+  // Fetch signals and markets in parallel
+  const [sigRes, mktRes] = await Promise.all([
+    fetch(`${BASE}/signals/?top=20`),
+    fetch(`${BASE}/markets/?limit=100`),
+  ]);
 
-  const signals = (data.signals || []).map(s => {
+  if (!sigRes.ok && !mktRes.ok) throw new Error(`Failed to load feed`);
+
+  // Backend returns a plain array for signals
+  const sigData = sigRes.ok ? await sigRes.json() : [];
+  const mktData = mktRes.ok ? await mktRes.json() : { markets: [] };
+
+  // Build a lookup map: market_id → market object
+  const marketMap = {};
+  (mktData.markets || []).forEach(m => { marketMap[m.id] = m; });
+
+  // Signals is a plain array from the backend
+  const rawSignals = Array.isArray(sigData) ? sigData : (sigData.signals || []);
+
+  const signals = rawSignals.map(s => {
+    const market  = marketMap[s.market_id] || {};
     const heatPct = Math.max(0, Math.min(100, Math.round((s.score || 0) * 100)));
     const status  = heatPct >= 80 ? 'hot' : heatPct >= 50 ? 'warm' : 'cool';
     return {
       id:     s.market_id,
-      cat:    s.category || 'General',
+      cat:    market.category || 'Crypto',
       heat:   `${heatPct}° ${status.toUpperCase()}`,
       status,
-      q:      s.question || 'Unknown market',
-      yes:    Math.round((s.current_odds || 0) * 100),
-      vol:    abbr(s.volume || 0),
+      q:      market.question || s.reason || 'Unknown market',
+      yes:    Math.round((market.current_odds || 0) * 100),
+      vol:    abbr(market.volume || 0),
       locked: (s.score || 0) >= 0.7,
       advice: s.reason || '',
     };
@@ -69,7 +85,7 @@ export async function getMarket(id) {
 }
 
 export async function listMarkets() {
-  const res = await fetch(`${BASE}/markets`);
+  const res = await fetch(`${BASE}/markets/?limit=100`);
   if (!res.ok) throw new Error(`Markets fetch failed: ${res.status}`);
   const data = await res.json();
   return (data.markets || []).map(m => ({

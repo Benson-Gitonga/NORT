@@ -33,7 +33,7 @@ export default function FeedPage() {
   const initials = user?.firstName ? user.firstName.slice(0, 2).toUpperCase() : 'NJ';
 
   return (
-    <AuthGate>
+    <AuthGate softGate>
       <div className="app">
 
         {/* ── Mobile-only header ── */}

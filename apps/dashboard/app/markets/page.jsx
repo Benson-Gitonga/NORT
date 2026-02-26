@@ -35,7 +35,7 @@ export default function MarketsPage() {
   };
 
   return (
-    <AuthGate>
+    <AuthGate softGate>
       <div className="app">
         <div className="header">
           <div className="header-logo">Markets</div>
