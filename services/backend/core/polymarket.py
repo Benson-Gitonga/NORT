@@ -1,147 +1,179 @@
 # polymarket.py
-# Fetches crypto markets from Polymarket Events API (tag_slug=crypto)
-# Then filters to only markets that mention specific crypto coins by name
+# Fetches short-term crypto price markets from Polymarket
+# Targets: BTC/ETH/SOL 5-min, 15-min, hourly "Up or Down" markets
+# These have slugs like: btc-updown-5m-*, btc-updown-15m-*, eth-updown-5m-*
+# Plus daily price markets: bitcoin-above-on-*, bitcoin-price-on-*
 
 import httpx
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 GAMMA_API = os.getenv("POLYMARKET_API_URL", "https://gamma-api.polymarket.com")
 
-# Coins to look for in market question text
-# Add any coin here and it will automatically be picked up
-CRYPTO_COINS = [
-    "bitcoin", "btc",
-    "ethereum", "eth",
-    "solana", "sol",
-    "xrp", "ripple",
-    "dogecoin", "doge",
-    "bnb",
-    "avax", "avalanche",
-    "hyperliquid", "hype",
-    "sui",
-    "cardano", "ada",
-    "chainlink",
-    "polygon", "matic",
-    "pepe",
-    "shiba", "shib",
-    "ton", "toncoin",
-    "near",
-    "injective", "inj",
-    "arbitrum", "arb",
-    "sei",
-    "aptos", "apt",
-    "crypto", "cryptocurrency",
-    "altcoin", "defi",
-    "stablecoin", "usdc", "usdt",
-    "coinbase", "binance", "kraken",
-    "microstrategy", "mstr",
-    "blackrock bitcoin", "spot etf", "bitcoin etf",
+# Slug prefixes that identify short-term crypto price markets
+# These are the live trading markets on Polymarket
+CRYPTO_SLUG_PREFIXES = [
+    "btc-updown-5m-",
+    "btc-updown-15m-",
+    "eth-updown-5m-",
+    "eth-updown-15m-",
+    "sol-updown-5m-",
+    "sol-updown-15m-",
+    "xrp-updown-5m-",
+    "xrp-updown-15m-",
 ]
 
+# Question text patterns for daily/weekly price markets
+PRICE_MARKET_PATTERNS = [
+    "bitcoin up or down",
+    "bitcoin above",
+    "bitcoin price on",
+    "eth up or down",
+    "ethereum up or down",
+    "solana up or down",
+    "xrp up or down",
+]
 
-def _get_coin_label(question: str) -> Optional[str]:
-    """
-    Returns the first coin matched in the question, or None if no match.
-    Used both for filtering AND for the category label on the card.
-    """
-    q = question.lower()
-    for coin in CRYPTO_COINS:
-        if coin in q:
-            # Return a clean display label
-            labels = {
-                "btc": "BTC", "bitcoin": "BTC",
-                "eth": "ETH", "ethereum": "ETH",
-                "sol": "SOL", "solana": "SOL",
-                "xrp": "XRP", "ripple": "XRP",
-                "doge": "DOGE", "dogecoin": "DOGE",
-                "bnb": "BNB",
-                "avax": "AVAX", "avalanche": "AVAX",
-                "hyperliquid": "HYPE", "hype": "HYPE",
-                "sui": "SUI",
-                "ada": "ADA", "cardano": "ADA",
-                "chainlink": "LINK",
-                "matic": "MATIC", "polygon": "MATIC",
-                "pepe": "PEPE",
-                "shib": "SHIB", "shiba": "SHIB",
-                "ton": "TON", "toncoin": "TON",
-                "near": "NEAR",
-                "inj": "INJ", "injective": "INJ",
-                "arb": "ARB", "arbitrum": "ARB",
-                "sei": "SEI",
-                "apt": "APT", "aptos": "APT",
-            }
-            return labels.get(coin, "Crypto")
-    return None
+# Coin label mapping
+COIN_LABELS = {
+    "btc": "BTC", "bitcoin": "BTC",
+    "eth": "ETH", "ethereum": "ETH",
+    "sol": "SOL", "solana": "SOL",
+    "xrp": "XRP",
+}
+
+
+def _get_coin_label(text: str) -> str:
+    t = text.lower()
+    for key, label in COIN_LABELS.items():
+        if key in t:
+            return label
+    return "Crypto"
+
+
+def _is_target_market(event: Dict) -> bool:
+    """Returns True if this event is a short-term crypto price market."""
+    slug     = (event.get("slug") or "").lower()
+    title    = (event.get("title") or "").lower()
+
+    # Match slug prefixes (5min/15min automated markets)
+    for prefix in CRYPTO_SLUG_PREFIXES:
+        if slug.startswith(prefix):
+            return True
+
+    # Match question text patterns (daily price markets)
+    for pattern in PRICE_MARKET_PATTERNS:
+        if pattern in title:
+            return True
+
+    return False
 
 
 def fetch_short_term_crypto_markets(limit: int = 300) -> List[Dict]:
     """
-    1. Fetch events with tag_slug=crypto from Polymarket
-    2. Extract all child markets from those events
-    3. Keep only markets whose question mentions a specific coin
+    Fetch short-term crypto price markets from Polymarket.
+    Strategy:
+      1. Search events with slug pattern for 5min/15min markets
+      2. Fetch recent events tagged 'bitcoin' for daily markets
+      3. Combine and deduplicate
     """
-    url = f"{GAMMA_API}/events"
     all_markets = []
-    offset = 0
+    seen_ids = set()
 
-    while True:
-        params = {
-            "active":   "true",
-            "closed":   "false",
-            "limit":    50,
-            "offset":   offset,
-            "tag_slug": "crypto",
-        }
+    # --- Strategy 1: Search for slug-based 5min/15min markets ---
+    for coin_prefix in ["btc-updown", "eth-updown", "sol-updown", "xrp-updown"]:
         try:
             with httpx.Client(timeout=15.0) as client:
-                r = client.get(url, params=params)
-                r.raise_for_status()
+                r = client.get(f"{GAMMA_API}/events", params={
+                    "active":  "true",
+                    "closed":  "false",
+                    "limit":   50,
+                    "slug":    coin_prefix,  # prefix search
+                })
                 data = r.json()
+                if isinstance(data, dict):
+                    data = data.get("events") or data.get("data") or []
+                if isinstance(data, list):
+                    for event in data:
+                        for m in _extract_markets(event):
+                            if m["id"] not in seen_ids:
+                                seen_ids.add(m["id"])
+                                all_markets.append(m)
         except Exception as e:
-            print(f"[Polymarket] Events API error at offset {offset}: {e}")
-            break
+            print(f"[Polymarket] Slug search error for {coin_prefix}: {e}")
 
-        if isinstance(data, dict):
-            data = data.get("events") or data.get("data") or []
-        if not isinstance(data, list) or len(data) == 0:
-            break
+    # --- Strategy 2: Fetch events by bitcoin/ethereum/solana tag ---
+    for tag in ["bitcoin", "ethereum", "solana", "xrp"]:
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(f"{GAMMA_API}/events", params={
+                    "active":   "true",
+                    "closed":   "false",
+                    "limit":    50,
+                    "tag_slug": tag,
+                })
+                data = r.json()
+                if isinstance(data, dict):
+                    data = data.get("events") or data.get("data") or []
+                if isinstance(data, list):
+                    for event in data:
+                        if not _is_target_market(event):
+                            continue
+                        for m in _extract_markets(event):
+                            if m["id"] not in seen_ids:
+                                seen_ids.add(m["id"])
+                                all_markets.append(m)
+        except Exception as e:
+            print(f"[Polymarket] Tag search error for {tag}: {e}")
 
-        for event in data:
-            event_title = event.get("title") or ""
-            event_markets = event.get("markets") or []
-            for m in event_markets:
-                # Use event title if market question is missing
-                if not m.get("question"):
-                    m["question"] = event_title
-                parsed = parse_market(m)
-                if parsed and parsed["id"]:
-                    all_markets.append(parsed)
+    # --- Strategy 3: Search API for "bitcoin up or down" ---
+    for query in ["bitcoin up or down", "bitcoin above", "bitcoin price on"]:
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(f"{GAMMA_API}/events", params={
+                    "active":  "true",
+                    "closed":  "false",
+                    "limit":   30,
+                    "search":  query,
+                })
+                data = r.json()
+                if isinstance(data, dict):
+                    data = data.get("events") or data.get("data") or []
+                if isinstance(data, list):
+                    for event in data:
+                        for m in _extract_markets(event):
+                            if m["id"] not in seen_ids:
+                                seen_ids.add(m["id"])
+                                all_markets.append(m)
+        except Exception as e:
+            print(f"[Polymarket] Search error for '{query}': {e}")
 
-        print(f"[Polymarket] Page offset={offset}: {len(data)} events fetched.")
-        if len(data) < 50 or len(all_markets) >= limit:
-            break
-        offset += 50
-
-    # Filter to only markets that mention a specific coin
-    coin_markets = [m for m in all_markets if m.get("category") != "Crypto-General"]
-    # (parse_market sets category="Crypto-General" when no coin matched — filter those out)
-    # Actually filter by checking _get_coin_label on question
-    filtered = [m for m in all_markets if _get_coin_label(m["question"]) is not None]
-
-    print(f"[Polymarket] Total: {len(all_markets)} crypto markets, {len(filtered)} with specific coin mentions.")
-    return filtered if filtered else all_markets  # fallback: return all if filter too strict
+    print(f"[Polymarket] Total short-term crypto markets found: {len(all_markets)}")
+    return all_markets[:limit]
 
 
-def parse_market(item: Dict) -> Optional[Dict]:
+def _extract_markets(event: Dict) -> List[Dict]:
+    """Extract and parse all child markets from an event."""
+    results = []
+    event_title = event.get("title") or ""
+    for m in (event.get("markets") or []):
+        if not m.get("question"):
+            m["question"] = event_title
+        parsed = parse_market(m, event_title)
+        if parsed:
+            results.append(parsed)
+    return results
+
+
+def parse_market(item: Dict, event_title: str = "") -> Optional[Dict]:
     """Converts a raw Polymarket market item to our Market schema dict."""
-    market_id = item.get("id") or item.get("conditionId") or ""
+    market_id = str(item.get("id") or item.get("conditionId") or "")
     if not market_id:
         return None
 
-    question = item.get("question") or "Unknown"
+    question = item.get("question") or event_title or "Unknown"
 
     try:
         outcomes = item.get("outcomePrices", "[]")
@@ -161,13 +193,10 @@ def parse_market(item: Dict) -> Optional[Dict]:
     volume1wk  = float(item.get("volume1wk") or 0)
     avg_volume = (volume1wk / 7) if volume1wk > 0 else max(volume24hr, 1.0)
 
-    # Label the category as the coin name (BTC, ETH, SOL etc.)
-    coin_label = _get_coin_label(question) or "Crypto"
-
     return {
-        "id":            str(market_id),
+        "id":            market_id,
         "question":      question,
-        "category":      coin_label,
+        "category":      _get_coin_label(question),
         "current_odds":  current_odds,
         "previous_odds": current_odds,
         "volume":        volume24hr,
