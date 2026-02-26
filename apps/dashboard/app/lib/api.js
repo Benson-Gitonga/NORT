@@ -298,7 +298,12 @@ export async function getLeaderboard(limit = 50) {
 }
 
 export async function getMyRank(walletAddress) {
-  const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(walletAddress)}`);
+  if (!walletAddress) return null;
+  // Always send lowercase — the DB stores wallet addresses lowercased
+  const addr = walletAddress.toLowerCase();
+  const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(addr)}`);
+  // 404 = user hasn't traded yet — not an error, just no rank card yet
+  if (res.status === 404) return null;
   if (!res.ok) return null;
   return await res.json();
 }

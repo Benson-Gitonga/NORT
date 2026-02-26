@@ -185,6 +185,8 @@ def get_leaderboard(session: Session, limit: int = 50) -> List[dict]:
         if u.telegram_id:
             user_by_tid[u.telegram_id] = u
         if u.wallet_address:
+            # Index by both original and lowercase — WalletConfig.telegram_user_id is lowercase
+            user_by_tid[u.wallet_address] = u
             user_by_tid[u.wallet_address.lower()] = u
 
     rows = []
@@ -198,9 +200,11 @@ def get_leaderboard(session: Session, limit: int = 50) -> List[dict]:
         winning       = [t for t in closed_trades if (t.pnl or 0) > 0]
 
         open_cost       = sum(t.total_cost for t in open_trades)
-        realized_pnl    = sum(t.pnl or 0 for t in closed_trades)
         portfolio_value = round(config.paper_balance + open_cost, 2)
-        net_pnl         = round(portfolio_value - config.total_deposited + realized_pnl, 2)
+        # net_pnl = how much above/below the starting $1000 the user is.
+        # paper_balance already reflects all closed trade payouts, so we
+        # do NOT add realized_pnl again — that would double-count it.
+        net_pnl         = round(portfolio_value - config.total_deposited, 2)
         total_trades    = len(trades)
         win_rate        = round(len(winning) / len(closed_trades) * 100, 1) if closed_trades else 0.0
         streak          = compute_streak(trades)
@@ -259,9 +263,8 @@ def get_user_stats(tid: str, session: Session) -> dict:
     closed_trades  = [t for t in trades if t.status == "CLOSED"]
     winning_trades = [t for t in closed_trades if (t.pnl or 0) > 0]
     open_cost      = sum(t.total_cost for t in trades if t.status == "OPEN")
-    realized_pnl   = sum(t.pnl or 0 for t in closed_trades)
     portfolio_value = round(config.paper_balance + open_cost, 2)
-    net_pnl         = round(portfolio_value - config.total_deposited + realized_pnl, 2)
+    net_pnl         = round(portfolio_value - config.total_deposited, 2)
 
     win_rate   = round(len(winning_trades) / len(closed_trades) * 100, 1) if closed_trades else 0.0
     streak     = compute_streak(trades)
@@ -297,9 +300,8 @@ def get_achievements(tid: str, session: Session) -> List[dict]:
         return [dict(a, earned=False, isNew=False) for a in ACHIEVEMENT_DEFS]
 
     closed_trades = [t for t in trades if t.status == "CLOSED"]
-    realized_pnl  = sum(t.pnl or 0 for t in closed_trades)
     open_cost     = sum(t.total_cost for t in trades if t.status == "OPEN")
     portfolio_value = round(config.paper_balance + open_cost, 2)
-    net_pnl         = round(portfolio_value - config.total_deposited + realized_pnl, 2)
+    net_pnl         = round(portfolio_value - config.total_deposited, 2)
 
     return check_achievements(trades=trades, net_pnl=net_pnl)
