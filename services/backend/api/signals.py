@@ -17,8 +17,15 @@ def get_top_signals(top: int = 20):
         markets = session.exec(market_stmt).all()
         market_map = {m.id: m for m in markets}
 
-        # Try stored AISignal snapshots first
-        statement = select(AISignal).order_by(AISignal.confidence_score.desc()).limit(top)
+        # Try stored AISignal snapshots — but only if they are fresh (< 10 minutes old)
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(minutes=10)
+        statement = (
+            select(AISignal)
+            .where(AISignal.timestamp >= cutoff)
+            .order_by(AISignal.confidence_score.desc())
+            .limit(top)
+        )
         signals = session.exec(statement).all()
 
         if signals:
@@ -29,7 +36,6 @@ def get_top_signals(top: int = 20):
                     "market_id":    s.market_id,
                     "score":        s.confidence_score,
                     "reason":       s.analysis_summary,
-                    # Enriched market fields so frontend doesn't need a second fetch
                     "question":     m.question      if m else "Unknown market",
                     "category":     m.category      if m else "crypto",
                     "current_odds": m.current_odds  if m else 0.5,
@@ -75,6 +81,14 @@ def get_top_signals(top: int = 20):
 
 
 def save_signal_snapshot(session: Session, ranked: list):
+    # FIX for issue #9: delete ALL old snapshots before saving fresh ones.
+    # Without this, the table grows forever and stale high-score rows
+    # shadow current data, making the live engine permanently unreachable.
+    old_signals = session.exec(select(AISignal)).all()
+    for old in old_signals:
+        session.delete(old)
+    session.commit()
+
     for signal in ranked:
         snapshot = AISignal(
             market_id=signal.get("market_id") or signal.get("id"),

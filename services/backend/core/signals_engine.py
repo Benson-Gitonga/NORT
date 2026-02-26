@@ -43,16 +43,19 @@ def momentum_score(market: Dict) -> float:
     Calculates a normalized momentum score based on price change.
     current_odds  = latest price (e.g. 0.72)
     previous_odds = price from last snapshot (e.g. 0.50)
+
+    Returns 0.0 if previous_odds is missing or equal to current_odds
+    (i.e. brand-new market with no price history yet).
     """
     current = market.get("current_odds", 0.5)
-    previous = market.get("previous_odds", current)  # fallback: no change
+    previous = market.get("previous_odds")
 
-    if previous == 0:
+    # FIX for issue #7: if previous_odds was never set (new market),
+    # we have no history to measure movement against — score is 0.
+    if previous is None or previous == 0 or previous == current:
         return 0.0
 
-    raw_change = abs(current - previous) / previous  # e.g. 0.44 = 44% move
-
-    # Cap at 1.0 — a 100%+ move still scores 1.0
+    raw_change = abs(current - previous) / previous
     return min(raw_change, 1.0)
 
 

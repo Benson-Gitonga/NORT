@@ -39,6 +39,7 @@ def sync_markets(session: Session = None):
                 if existing_market:
                     existing_market.question      = parsed["question"]
                     existing_market.category      = parsed["category"]
+                    # Preserve real previous_odds: save the old current before overwriting
                     existing_market.previous_odds = existing_market.current_odds
                     existing_market.current_odds  = parsed["current_odds"]
                     existing_market.volume        = parsed["volume"]
@@ -47,7 +48,12 @@ def sync_markets(session: Session = None):
                     existing_market.expires_at    = parsed["expires_at"]
                     s.add(existing_market)
                 else:
-                    s.add(Market(**parsed))
+                    # Brand-new market: previous_odds defaults to current_odds
+                    # so momentum is 0 until the second sync (correct behaviour —
+                    # we have no historical data yet)
+                    new_market = parsed.copy()
+                    new_market["previous_odds"] = parsed["current_odds"]
+                    s.add(Market(**new_market))
                 saved += 1
             except Exception as e:
                 print(f"[sync] Skipping {parsed.get('id')}: {e}")
