@@ -1,9 +1,11 @@
 'use client';
+import { useState } from 'react';
 import { useTelegram } from '@/hooks/useTelegram';
 
-export default function FeedCard({ data, index, onTrade, onChat }) {
+export default function FeedCard({ data, index, onTrade }) {
   const { haptic } = useTelegram();
   const delay = `d${(index % 6) + 1}`;
+  const [copied, setCopied] = useState(false);
 
   const handleTrade = (side, e) => {
     e.stopPropagation();
@@ -11,10 +13,26 @@ export default function FeedCard({ data, index, onTrade, onChat }) {
     onTrade?.(data, side);
   };
 
-  const handleChat = (e) => {
+  const handleCopyId = (e) => {
     e.stopPropagation();
     haptic.light();
-    onChat?.(data);
+    navigator.clipboard.writeText(data.id).then(() => {
+      setCopied(true);
+      haptic.success?.();
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Fallback for environments where clipboard API isn't available
+      const el = document.createElement('textarea');
+      el.value = data.id;
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   return (
@@ -49,25 +67,15 @@ export default function FeedCard({ data, index, onTrade, onChat }) {
           <button className="bet-btn" onClick={(e) => handleTrade('no', e)}>▼ Bet NO</button>
         </div>
 
-        {/* AI Advice */}
-        <div className="advice-wrap">
-          <div className="advice-glass">
-            <div className="advice-text">{data.advice}</div>
-          </div>
-          {data.locked ? (
-            <div className="advice-lock">
-              <button className="lock-btn" onClick={handleChat}>
-                Ask OpenClaw · 0.10 USDC
-              </button>
-            </div>
-          ) : (
-            <div className="advice-lock" style={{ borderTop: 'none', padding: '0 12px 10px' }}>
-              <button className="chip-btn" style={{ width: '100%' }} onClick={handleChat}>
-                Chat OpenClaw →
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Market ID copy button */}
+        <button
+          className={`market-id-btn ${copied ? 'copied' : ''}`}
+          onClick={handleCopyId}
+        >
+          <span className="market-id-label">ID</span>
+          <span className="market-id-value">{data.id}</span>
+          <span className="market-id-action">{copied ? '✓ Copied' : '⎘ Copy'}</span>
+        </button>
       </div>
     </div>
   );

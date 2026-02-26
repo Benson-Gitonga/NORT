@@ -1444,3 +1444,71 @@ body::after {
     max-width: 320px;
   }
 }
+
+/* ── Market ID copy button ──────────────────────────────────────────────── */
+.market-id-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--rsm);
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  overflow: hidden;
+}
+
+.market-id-btn:hover {
+  border-color: var(--teal-border);
+  background: var(--teal-glow);
+}
+
+.market-id-btn.copied {
+  border-color: var(--green);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.market-id-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  background: var(--glass-bg);
+}
+
+.market-id-value {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.market-id-action {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: var(--teal);
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.market-id-btn.copied .market-id-action {
+  color: var(--green);
+  opacity: 1;
+}
+
+.market-id-btn.copied .market-id-value {
+  color: var(--green);
+}

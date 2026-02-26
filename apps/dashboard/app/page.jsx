@@ -8,7 +8,6 @@ import AuthGate from '@/components/AuthGate';
 import FeedCard from '@/components/FeedCard';
 import Navbar from '@/components/Navbar';
 import TradeModal from '@/components/TradeModal';
-import ChatSheet from '@/components/ChatSheet';
 import SkeletonCard from '@/components/SkeletonCard';
 
 const FILTERS   = ['all', 'hot', 'warm', 'cool'];
@@ -25,7 +24,6 @@ export default function FeedPage() {
   const [filter, setFilter]           = useState('all');
   const [tradeSignal, setTradeSignal] = useState(null);
   const [tradeSide, setTradeSide]     = useState('yes');
-  const [chatSignal, setChatSignal]   = useState(null);
   const [toast, setToast]             = useState(null);
 
   useEffect(() => {
@@ -95,7 +93,6 @@ export default function FeedPage() {
                     data={sig}
                     index={i}
                     onTrade={handleTrade}
-                    onChat={setChatSignal}
                   />
                 ))
             }
@@ -120,9 +117,6 @@ export default function FeedPage() {
             onClose={() => setTradeSignal(null)}
             onSuccess={() => showToast('Paper trade placed ✓')}
           />
-        )}
-        {chatSignal && (
-          <ChatSheet signal={chatSignal} onClose={() => setChatSignal(null)} />
         )}
 
         {toast && <div className="toast">{toast}</div>}
