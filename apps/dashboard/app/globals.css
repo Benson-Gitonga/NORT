@@ -1315,6 +1315,20 @@ body::after {
 .sv.pos { color: var(--green); }
 .sv.neg { color: var(--red); }
 
+/* ── Win / Loss result badge on closed trades ── */
+.result-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.result-badge.win  { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+.result-badge.loss { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
+.result-badge.flat { background: rgba(160,160,160,0.1); color: var(--g3);    border: 1px solid rgba(160,160,160,0.2); }
+
 @media (min-width: 768px) {
   .ach-grid { grid-template-columns: repeat(4, 1fr); }
   .ach-popup { left: 50%; transform: translateX(-50%); max-width: 400px; }

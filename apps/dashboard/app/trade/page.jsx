@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 import { useState, useEffect } from 'react';
-import { getTrades, getWallet, commitTrade, getAchievements } from '@/lib/api';
+import { getTrades, getWallet, getAchievements } from '@/lib/api';
 import { useAchievement } from '@/components/AchievementContext';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
@@ -10,74 +10,65 @@ export default function BetsPage() {
   const [trades, setTrades]   = useState([]);
   const [wallet, setWallet]   = useState(null);
   const [loading, setLoading] = useState(true);
-  const [prevTrades, setPrevTrades] = useState(0);
-  const [checkedInitial, setCheckedInitial] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const { showAchievement } = useAchievement();
 
-  useEffect(() => {
-    Promise.all([getTrades(), getWallet()])
-      .then(([t, w]) => { 
-        setTrades(t); 
-        setWallet(w); 
-        setPrevTrades(t.length);
-        setCheckedInitial(true);
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const checkAchievements = async (currentTrades) => {
-    const ach = await getAchievements();
-    
-    if (currentTrades >= 1) {
-      const first = ach.find(a => a.id === 'first' && a.earned);
-      if (first) showAchievement(first);
-    }
-    if (currentTrades >= 10) {
-      const paper = ach.find(a => a.id === 'paper' && a.earned);
-      if (paper) showAchievement(paper);
-    }
-    if (currentTrades >= 50) {
-      const whale = ach.find(a => a.id === 'whale' && a.earned);
-      if (whale) showAchievement(whale);
-    }
-  };
-
-  useEffect(() => {
-    if (checkedInitial && trades.length > 0) {
-      checkAchievements(trades.length);
-    }
-  }, [trades, checkedInitial]);
-
-  const onCommit = async (id) => {
-    const r = await commitTrade(id);
-    if (r.ok) {
-      const t = await getTrades();
-      const w = await getWallet();
+  const load = async (showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    try {
+      const [t, w] = await Promise.all([getTrades(), getWallet()]);
       setTrades(t);
       setWallet(w);
-      setTimeout(() => checkAchievements(t.length), 500);
+      // Check achievements after loading
+      if (t.length > 0) {
+        const ach = await getAchievements();
+        if (t.length >= 1)  { const a = ach.find(x => x.id === 'first' && x.earned);   if (a) showAchievement(a); }
+        if (t.length >= 10) { const a = ach.find(x => x.id === 'paper' && x.earned);   if (a) showAchievement(a); }
+        if (t.length >= 50) { const a = ach.find(x => x.id === 'whale' && x.earned);   if (a) showAchievement(a); }
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const fmt = (n) => (n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`);
-  const pnlClass = (n) => (n > 0 ? 'pos' : n < 0 ? 'neg' : 'flat');
+  useEffect(() => { load(); }, []);
+
+  const fmt      = (n) => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
+  const pnlClass = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : 'flat';
+
+  const openTrades   = trades.filter(t => t.status === 'open');
+  const closedTrades = trades.filter(t => t.status === 'closed' || t.status === 'CLOSED');
+  const wins         = closedTrades.filter(t => (t.pnl || 0) > 0);
+  const losses       = closedTrades.filter(t => (t.pnl || 0) < 0);
+
+  const resultBadge = (t) => {
+    if (t.status !== 'closed' && t.status !== 'CLOSED') return null;
+    if ((t.pnl || 0) > 0)  return <span className="result-badge win">WIN</span>;
+    if ((t.pnl || 0) < 0)  return <span className="result-badge loss">LOSS</span>;
+    return <span className="result-badge flat">EVEN</span>;
+  };
 
   return (
     <AuthGate>
       <div className="app">
-        {/* Header */}
         <div className="header">
           <div className="header-logo">My Bets</div>
           <div className="header-right">
-            <div className="live-pill">
-              <span className="live-dot" />
-              Paper
-            </div>
+            <button
+              className="chip-btn"
+              onClick={() => load(true)}
+              disabled={refreshing}
+              style={{ fontSize: 11 }}
+            >
+              {refreshing ? '⟳ Checking...' : '⟳ Refresh'}
+            </button>
+            <div className="live-pill"><span className="live-dot" />Paper</div>
           </div>
         </div>
 
         <div className="scroll">
-          {/* Wallet stats */}
+          {/* ── Wallet Stats ── */}
           <div className="bets-stats fu d1">
             <div className="stat-card">
               <span className="stat-label">Balance</span>
@@ -93,50 +84,88 @@ export default function BetsPage() {
               <span className="stat-label">Trades</span>
               <span className="stat-val">{wallet?.trades ?? '—'}</span>
             </div>
+            <div className="stat-card">
+              <span className="stat-label">W / L</span>
+              <span className="stat-val">
+                <span style={{ color: 'var(--green)' }}>{wins.length}</span>
+                {' / '}
+                <span style={{ color: 'var(--red)' }}>{losses.length}</span>
+              </span>
+            </div>
           </div>
 
-          {/* Section label */}
-          <div className="sec-lbl fu d2">
-            <span className="sec-t">Open Positions</span>
-            <span className="sec-t">{trades.filter(t => t.status === 'open').length} active</span>
-          </div>
-
-          {/* Trade list */}
           {loading ? (
-            <div className="empty"><div className="empty-icon">⟳</div><div className="empty-text">Loading trades...</div></div>
+            <div className="empty">
+              <div className="empty-icon">⟳</div>
+              <div className="empty-text">Loading trades...</div>
+            </div>
           ) : trades.length === 0 ? (
             <div className="empty">
               <div className="empty-icon">◇</div>
-              <div className="empty-text">No trades yet. Place your first paper trade.</div>
+              <div className="empty-text">No trades yet. Go to the Feed to place your first paper trade.</div>
             </div>
           ) : (
-            <div style={{ paddingBottom: 8 }}>
-              {trades.map((t, i) => (
-                <div key={t.id} className={`trade-item fu d${Math.min(i + 3, 6)}`}>
-                  <div className={`trade-side-badge ${t.side}`}>
-                    {t.side.toUpperCase()}
+            <>
+              {/* ── Open Positions ── */}
+              {openTrades.length > 0 && (
+                <>
+                  <div className="sec-lbl fu d2">
+                    <span className="sec-t">Open Positions</span>
+                    <span className="sec-t">{openTrades.length} active</span>
                   </div>
-                  <div className="trade-info">
-                    <div className="trade-q">{t.q}</div>
-                    <div className="trade-meta">
-                      ${t.amount} · {(t.price * 100).toFixed(0)}¢ entry · {t.status}
-                    </div>
+                  <div style={{ paddingBottom: 4 }}>
+                    {openTrades.map((t, i) => (
+                      <div key={t.id} className={`trade-item fu d${Math.min(i + 3, 6)}`}>
+                        <div className={`trade-side-badge ${t.side}`}>{t.side.toUpperCase()}</div>
+                        <div className="trade-info">
+                          <div className="trade-q">{t.q}</div>
+                          <div className="trade-meta">
+                            ${t.amount?.toFixed(2)} · {(t.price * 100).toFixed(0)}¢ entry · waiting for resolution
+                          </div>
+                        </div>
+                        <div className="trade-pnl flat">pending</div>
+                      </div>
+                    ))}
                   </div>
-                  <div className={`trade-pnl ${pnlClass(t.pnl)}`}>
-                    {t.pnl !== 0 ? fmt(t.pnl) : '—'}
+                  <div style={{ fontSize: 11, color: 'var(--g3)', textAlign: 'center', padding: '4px 0 12px', fontFamily: 'DM Mono, monospace' }}>
+                    Trades settle automatically when Polymarket resolves the market
                   </div>
-                  {t.status === 'open' && !t.txHash ? (
-                    <button
-                      onClick={() => onCommit(t.id)}
-                      style={{ marginLeft: 8 }}
-                      className="chip-btn"
-                    >
-                      Commit
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
+                </>
+              )}
+
+              {/* ── Closed Trades (wins/losses) ── */}
+              {closedTrades.length > 0 && (
+                <>
+                  <div className="sec-lbl fu d3">
+                    <span className="sec-t">Closed Trades</span>
+                    <span className="sec-t">
+                      <span style={{ color: 'var(--green)' }}>{wins.length}W</span>
+                      {' · '}
+                      <span style={{ color: 'var(--red)' }}>{losses.length}L</span>
+                    </span>
+                  </div>
+                  <div style={{ paddingBottom: 8 }}>
+                    {closedTrades.map((t, i) => (
+                      <div key={t.id} className={`trade-item fu d${Math.min(i + 3, 6)}`}>
+                        <div className={`trade-side-badge ${t.side}`}>{t.side.toUpperCase()}</div>
+                        <div className="trade-info">
+                          <div className="trade-q">{t.q}</div>
+                          <div className="trade-meta">
+                            ${t.amount?.toFixed(2)} · {(t.price * 100).toFixed(0)}¢ entry · closed
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                          {resultBadge(t)}
+                          <div className={`trade-pnl ${pnlClass(t.pnl || 0)}`}>
+                            {t.pnl != null ? fmt(t.pnl) : '—'}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
 
