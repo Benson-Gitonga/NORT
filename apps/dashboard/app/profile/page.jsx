@@ -15,29 +15,41 @@ export default function ProfilePage() {
   const [stats, setStats]     = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Username editing
+  // Username state — fetched from DB, editable inline
+  const [dbUsername, setDbUsername]     = useState('');
   const [editingName, setEditingName]   = useState(false);
   const [newUsername, setNewUsername]   = useState('');
   const [savingName, setSavingName]     = useState(false);
-  const [savedUsername, setSavedUsername] = useState('');
+  const [saveError, setSaveError]       = useState('');
 
+  // On wallet load: register wallet in DB, fetch username + stats
+  useEffect(() => {
+    if (!walletAddress) return;
+    const addr = walletAddress.toLowerCase();
+
+    // Register wallet (idempotent — safe to call every visit)
+    fetch(`${BASE}/api/wallet/connect`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet_address: addr }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data?.username) {
+          setDbUsername(data.username);
+          try { window.localStorage.setItem('nort_username', data.username); } catch {}
+        }
+      })
+      .catch(() => {});
+  }, [walletAddress]);
+
+  // Fetch trade data and stats
   useEffect(() => {
     Promise.all([getWallet(), getTrades(), getUserStats()])
       .then(([w, t, s]) => { setWallet(w); setTrades(t); setStats(s); })
       .catch(console.warn)
       .finally(() => setLoading(false));
   }, []);
-
-  // Auto-register wallet in DB so trades work
-  useEffect(() => {
-    if (!walletAddress) return;
-    fetch(`${BASE}/api/wallet/connect`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // Do NOT pass telegram_id here — it has a UNIQUE constraint.
-      body: JSON.stringify({ wallet_address: walletAddress.toLowerCase() }),
-    }).catch(() => {});
-  }, [walletAddress]);
 
   const handleLogout = () => { haptic?.medium?.(); logout(); };
 
@@ -56,39 +68,42 @@ export default function ProfilePage() {
   const saveUsername = async () => {
     if (!newUsername.trim() || !walletAddress) return;
     setSavingName(true);
+    setSaveError('');
     try {
-      await fetch(`${BASE}/api/wallet/connect`, {
+      const res = await fetch(`${BASE}/api/wallet/connect`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          wallet_address: walletAddress,
-          telegram_id:   walletAddress.toLowerCase(),
-          username:      newUsername.trim(),
+          wallet_address: walletAddress.toLowerCase(),
+          username:       newUsername.trim(),
         }),
       });
-      setSavedUsername(newUsername.trim());
+      if (!res.ok) throw new Error('Save failed');
+      // Update local state immediately — no reload needed
+      setDbUsername(newUsername.trim());
+      try { window.localStorage.setItem('nort_username', newUsername.trim()); } catch {}
       setEditingName(false);
     } catch (e) {
-      console.warn('username save failed:', e);
+      setSaveError('Could not save username. Try again.');
     } finally {
       setSavingName(false);
     }
   };
 
-  const displayName = savedUsername || user?.firstName || user?.name || 'Trader';
+  // displayName priority: DB username > Privy name > fallback
+  const displayName = dbUsername || user?.firstName || user?.name || 'Trader';
   const initials    = getInitials(displayName);
+  const isNewUser   = !dbUsername && !user?.firstName && !user?.name;
 
-  // Computed trade stats
-  const closedTrades  = trades.filter(t => t.status === 'closed');
-  const wins          = closedTrades.filter(t => (t.pnl || 0) > 0);
-  const losses        = closedTrades.filter(t => (t.pnl || 0) < 0);
-  const winRate       = closedTrades.length > 0
-    ? Math.round((wins.length / closedTrades.length) * 100)
-    : 0;
-  const totalPnl      = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-  const openTrades    = trades.filter(t => t.status === 'open');
+  const closedTrades = trades.filter(t => t.status === 'closed');
+  const wins         = closedTrades.filter(t => (t.pnl || 0) > 0);
+  const losses       = closedTrades.filter(t => (t.pnl || 0) < 0);
+  const winRate      = closedTrades.length > 0
+    ? Math.round((wins.length / closedTrades.length) * 100) : 0;
+  const totalPnl     = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+  const openTrades   = trades.filter(t => t.status === 'open');
 
-  const fmt     = (n) => (n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`);
+  const fmt      = (n) => (n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`);
   const pnlColor = (n) => n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'inherit';
 
   return (
@@ -105,42 +120,58 @@ export default function ProfilePage() {
           {/* ── Avatar + Name ── */}
           <div className="profile-header fu d1">
             <div className="profile-avatar">{initials}</div>
-            <div className="profile-name">{displayName}</div>
-            {user?.email && (
-              <div className="profile-email">{user.email}</div>
-            )}
-            <button
-              className="chip-btn"
-              style={{ marginTop: 8 }}
-              onClick={() => { setNewUsername(''); setEditingName(true); }}
-            >
-              ✏ Edit Username
-            </button>
-          </div>
 
-          {/* Username editor */}
-          {editingName && (
-            <div className="settings-group fu d2" style={{ padding: 16 }}>
-              <div className="modal-input-wrap">
-                <input
-                  className="modal-input"
-                  type="text"
-                  placeholder="New username"
-                  value={newUsername}
-                  onChange={e => setNewUsername(e.target.value)}
-                  maxLength={24}
-                  onKeyDown={e => e.key === 'Enter' && saveUsername()}
-                  autoFocus
-                />
+            {editingName ? (
+              /* Inline edit mode */
+              <div style={{ width: '100%', marginTop: 8 }}>
+                <div className="modal-input-wrap">
+                  <input
+                    className="modal-input"
+                    type="text"
+                    placeholder="New username"
+                    value={newUsername}
+                    onChange={e => setNewUsername(e.target.value)}
+                    maxLength={24}
+                    onKeyDown={e => e.key === 'Enter' && saveUsername()}
+                    autoFocus
+                  />
+                </div>
+                {saveError && (
+                  <div style={{ color: 'var(--red)', fontSize: 11, marginTop: 4, textAlign: 'center' }}>
+                    {saveError}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'center' }}>
+                  <button className="modal-cta" onClick={saveUsername}
+                    disabled={!newUsername.trim() || savingName}
+                    style={{ flex: 1 }}>
+                    {savingName ? 'Saving...' : 'Save'}
+                  </button>
+                  <button className="chip-btn" onClick={() => { setEditingName(false); setSaveError(''); }}>
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button className="modal-cta" onClick={saveUsername} disabled={!newUsername.trim() || savingName}>
-                  {savingName ? 'Saving...' : 'Save'}
+            ) : (
+              /* Display mode */
+              <>
+                <div className="profile-name">{displayName}</div>
+                {isNewUser && (
+                  <div style={{ fontSize: 12, color: 'var(--g3)', marginTop: 4, textAlign: 'center' }}>
+                    Set a username so you appear on the leaderboard
+                  </div>
+                )}
+                {user?.email && <div className="profile-email">{user.email}</div>}
+                <button
+                  className="chip-btn"
+                  style={{ marginTop: 8 }}
+                  onClick={() => { setNewUsername(dbUsername || ''); setEditingName(true); setSaveError(''); }}
+                >
+                  ✏ {isNewUser ? 'Set Username' : 'Edit Username'}
                 </button>
-                <button className="chip-btn" onClick={() => setEditingName(false)}>Cancel</button>
-              </div>
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
           {/* ── Stats row ── */}
           <div className="sec-lbl fu d2"><span className="sec-t">Trading Stats</span></div>
