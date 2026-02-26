@@ -115,35 +115,53 @@ def refresh_markets():
 
 @router.get("/debug-polymarket")
 def debug_polymarket():
-    """Hits Polymarket API with pagination and shows crypto filter results."""
+    """Hits Polymarket API — shows tags and events-based crypto fetch."""
     import httpx, os
-    url = f"{os.getenv('POLYMARKET_API_URL', 'https://gamma-api.polymarket.com')}/markets"
 
-    # Fetch 3 pages to see what's available
-    all_items = []
-    for offset in [0, 50, 100]:
-        try:
-            with httpx.Client(timeout=15.0) as client:
-                r = client.get(url, params={"active": "true", "closed": "false", "limit": 50, "offset": offset})
-                page = r.json()
-                if isinstance(page, dict):
-                    page = page.get("markets") or page.get("data") or []
-                if isinstance(page, list):
-                    all_items.extend(page)
-        except Exception as e:
-            return {"error": str(e), "fetched_so_far": len(all_items)}
+    results = {}
 
+    # 1. Get available tags
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get("https://gamma-api.polymarket.com/tags", params={"limit": 100})
+            tags = r.json()
+            if isinstance(tags, list):
+                results["tags"] = [{"id": t.get("id"), "slug": t.get("slug"), "label": t.get("label")} for t in tags[:30]]
+    except Exception as e:
+        results["tags_error"] = str(e)
+
+    # 2. Try fetching events with tag_slug=crypto
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get("https://gamma-api.polymarket.com/events", params={
+                "active": "true", "closed": "false", "limit": 10, "tag_slug": "crypto"
+            })
+            events = r.json()
+            if isinstance(events, dict):
+                events = events.get("events") or events.get("data") or []
+            results["events_crypto_count"] = len(events) if isinstance(events, list) else "not a list"
+            results["events_sample"] = [
+                {"id": e.get("id"), "title": (e.get("title") or "")[:80], "tags": e.get("tags")}
+                for e in (events[:3] if isinstance(events, list) else [])
+            ]
+    except Exception as e:
+        results["events_error"] = str(e)
+
+    # 3. Show current crypto keyword matches from our filter
     from services.backend.core.polymarket import _is_crypto_market
-    crypto_hits = [i for i in all_items if _is_crypto_market(i)]
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get("https://gamma-api.polymarket.com/markets", params={"active": "true", "closed": "false", "limit": 50, "offset": 100})
+            page = r.json()
+            if isinstance(page, dict):
+                page = page.get("markets") or page.get("data") or []
+            hits = [i for i in page if _is_crypto_market(i)] if isinstance(page, list) else []
+            results["keyword_matches_page3"] = [{"q": (i.get("question") or "")[:80]} for i in hits[:5]]
+            results["page3_total"] = len(page) if isinstance(page, list) else 0
+    except Exception as e:
+        results["keyword_error"] = str(e)
 
-    return {
-        "total_fetched": len(all_items),
-        "crypto_matches": len(crypto_hits),
-        "crypto_sample": [
-            {"id": i.get("id"), "question": (i.get("question") or "")[:100], "volume24hr": i.get("volume24hr")}
-            for i in crypto_hits[:10]
-        ],
-    }
+    return results
 
 
 @router.get("/{market_id}")
