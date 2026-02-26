@@ -1,57 +1,83 @@
 # polymarket.py
 # Fetches crypto markets from the Polymarket Gamma API
+# Uses pagination to get enough markets since API caps at 50 per request
 
 import httpx
 import os
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Dict, Optional
 
 POLYMARKET_API_URL = os.getenv("POLYMARKET_API_URL", "https://gamma-api.polymarket.com")
 
+# Strict crypto keywords — must clearly refer to crypto assets
+# Avoid short words like "coin", "link", "sol" that match non-crypto text
 CRYPTO_KEYWORDS = [
-    "bitcoin", "btc", "ethereum", "eth", "solana", "sol",
-    "ripple", "xrp", "dogecoin", "doge", "binance", "bnb",
-    "avalanche", "avax", "chainlink", "link", "cardano", "ada",
-    "polygon", "matic", "crypto", "cryptocurrency", "defi",
-    "stablecoin", "usdc", "usdt", "coinbase", "blockchain",
+    "bitcoin", " btc ",  "btc $", "btc price", "btc hit", "btc above", "btc below", "btc reach",
+    "ethereum", " eth ", "eth $", "eth price", "eth hit", "eth above", "eth below",
+    "solana", " sol ", "sol price", "sol hit",
+    "ripple", " xrp ", "xrp price",
+    "dogecoin", "doge price", "doge hit",
+    " bnb ", "bnb price",
+    "avalanche avax", " avax ",
+    "chainlink link price",
+    "cardano", " ada ",
+    "polygon matic", " matic ",
+    "cryptocurrency", "crypto market", "crypto price",
+    "altcoin", "defi protocol",
+    "stablecoin", "usdc depeg", "usdt depeg",
+    "coinbase stock", "coinbase ipo",
+    "binance exchange",
 ]
 
-
 def _is_crypto_market(item: Dict) -> bool:
+    """Returns True only if this market is clearly about crypto."""
     question = (item.get("question") or "").lower()
-    category = (item.get("category") or "").lower()
-    slug     = (item.get("slug") or "").lower()
-    if "crypto" in category or "bitcoin" in category or "ethereum" in category:
-        return True
-    combined = question + " " + slug
-    return any(kw in combined for kw in CRYPTO_KEYWORDS)
+    # Pad with spaces for whole-word matching
+    padded = f" {question} "
+    return any(kw in padded for kw in CRYPTO_KEYWORDS)
 
 
 def fetch_short_term_crypto_markets(limit: int = 500) -> List[Dict]:
-    """Fetches active markets from Polymarket and returns crypto-related ones."""
+    """
+    Fetches crypto markets from Polymarket using pagination.
+    Polymarket API caps at ~50 per request so we paginate with offset.
+    """
     url = f"{POLYMARKET_API_URL}/markets"
-    # Fetch a large pool — category is null on all markets so we filter by keyword
-    params = {"active": "true", "closed": "false", "limit": limit}
+    all_markets = []
+    offset = 0
+    page_size = 50  # API max per request
 
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(url, params=params)
-            response.raise_for_status()
-            raw_markets = response.json()
-    except Exception as e:
-        print(f"[Polymarket] Fetch error: {e}")
-        return []
+    while len(all_markets) < limit:
+        params = {
+            "active":  "true",
+            "closed":  "false",
+            "limit":   page_size,
+            "offset":  offset,
+        }
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(url, params=params)
+                response.raise_for_status()
+                page = response.json()
+        except Exception as e:
+            print(f"[Polymarket] Fetch error at offset {offset}: {e}")
+            break
 
-    # Handle both list and dict wrapper responses
-    if isinstance(raw_markets, dict):
-        raw_markets = raw_markets.get("markets") or raw_markets.get("data") or []
-    if not isinstance(raw_markets, list):
-        print(f"[Polymarket] Unexpected response type: {type(raw_markets)}")
-        return []
+        if isinstance(page, dict):
+            page = page.get("markets") or page.get("data") or []
+        if not isinstance(page, list) or len(page) == 0:
+            break  # No more results
+
+        all_markets.extend(page)
+        if len(page) < page_size:
+            break  # Last page
+        offset += page_size
+
+    print(f"[Polymarket] Fetched {len(all_markets)} total markets across {offset // page_size + 1} pages.")
 
     crypto_markets = []
-    for item in raw_markets:
+    for item in all_markets:
         try:
             if _is_crypto_market(item):
                 parsed = parse_market(item)
@@ -60,7 +86,7 @@ def fetch_short_term_crypto_markets(limit: int = 500) -> List[Dict]:
         except Exception as e:
             print(f"[Polymarket] Skipping {item.get('id')}: {e}")
 
-    print(f"[Polymarket] Fetched {len(raw_markets)} total, kept {len(crypto_markets)} crypto markets.")
+    print(f"[Polymarket] Kept {len(crypto_markets)} crypto markets.")
     return crypto_markets
 
 

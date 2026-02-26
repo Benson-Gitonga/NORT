@@ -115,34 +115,34 @@ def refresh_markets():
 
 @router.get("/debug-polymarket")
 def debug_polymarket():
-    """Hits Polymarket API directly — shows raw response for debugging."""
+    """Hits Polymarket API with pagination and shows crypto filter results."""
     import httpx, os
     url = f"{os.getenv('POLYMARKET_API_URL', 'https://gamma-api.polymarket.com')}/markets"
-    # Fetch 50 sorted by volume, show which ones pass the crypto filter
-    params = {"active": "true", "closed": "false", "limit": 50, "sort_by": "volume24hr", "ascending": "false"}
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.get(url, params=params)
-            raw = r.json()
-    except Exception as e:
-        return {"error": str(e)}
+
+    # Fetch 3 pages to see what's available
+    all_items = []
+    for offset in [0, 50, 100]:
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(url, params={"active": "true", "closed": "false", "limit": 50, "offset": offset})
+                page = r.json()
+                if isinstance(page, dict):
+                    page = page.get("markets") or page.get("data") or []
+                if isinstance(page, list):
+                    all_items.extend(page)
+        except Exception as e:
+            return {"error": str(e), "fetched_so_far": len(all_items)}
 
     from services.backend.core.polymarket import _is_crypto_market
-    items = raw if isinstance(raw, list) else raw.get("markets") or raw.get("data") or []
-    crypto_hits = [i for i in items if _is_crypto_market(i)]
+    crypto_hits = [i for i in all_items if _is_crypto_market(i)]
 
     return {
-        "total_fetched": len(items),
+        "total_fetched": len(all_items),
         "crypto_matches": len(crypto_hits),
-        "all_categories": list(set(i.get("category") for i in items)),
         "crypto_sample": [
-            {"id": i.get("id"), "question": (i.get("question") or "")[:80], "volume24hr": i.get("volume24hr")}
+            {"id": i.get("id"), "question": (i.get("question") or "")[:100], "volume24hr": i.get("volume24hr")}
             for i in crypto_hits[:10]
         ],
-        "non_crypto_sample": [
-            {"id": i.get("id"), "question": (i.get("question") or "")[:80]}
-            for i in items[:5] if not _is_crypto_market(i)
-        ]
     }
 
 
