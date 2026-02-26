@@ -31,11 +31,13 @@ export function useRealAuth() {
   }, [wallets]);
 
   // Clear on page unload so sessions don't leak between users
+  // NOTE: we do NOT remove walletAddress here — logout handles that explicitly.
+  // Removing it on unload races with Privy's own logout flow.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleUnload = () => {
       try {
-        window.localStorage.removeItem("walletAddress");
+        window.localStorage.removeItem("nort_auth");
       } catch {}
     };
     window.addEventListener("beforeunload", handleUnload);
@@ -49,13 +51,16 @@ export function useRealAuth() {
   const isAuthed = !!privyReady && initialized && (!!authenticated || !!walletAddress || !!tgUser);
 
   const logout = async () => {
+    // 1. Sign out from Privy first, before clearing storage
+    try { await privyLogout(); } catch {}
+    // 2. Clear local state after Privy is done
     try {
       window.localStorage.removeItem("walletAddress");
       window.localStorage.removeItem("nort_auth");
     } catch {}
-    try { await privyLogout(); } catch {}
+    // 3. Hard redirect to root to reset all React state
     if (typeof window !== "undefined") {
-      window.location.replace(window.location.origin + "/");
+      window.location.href = "/";
     }
   };
 

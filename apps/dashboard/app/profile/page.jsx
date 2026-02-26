@@ -19,6 +19,7 @@ export default function ProfilePage() {
   const [editingName, setEditingName]   = useState(false);
   const [newUsername, setNewUsername]   = useState('');
   const [savingName, setSavingName]     = useState(false);
+  const [savedUsername, setSavedUsername] = useState('');
 
   useEffect(() => {
     Promise.all([getWallet(), getTrades(), getUserStats()])
@@ -26,6 +27,19 @@ export default function ProfilePage() {
       .catch(console.warn)
       .finally(() => setLoading(false));
   }, []);
+
+  // Auto-register wallet in DB so username save & trades work
+  useEffect(() => {
+    if (!walletAddress) return;
+    fetch(`${BASE}/api/wallet/connect`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        wallet_address: walletAddress,
+        telegram_id:   walletAddress.toLowerCase(),
+      }),
+    }).catch(() => {});
+  }, [walletAddress]);
 
   const handleLogout = () => { haptic?.medium?.(); logout(); };
 
@@ -54,6 +68,7 @@ export default function ProfilePage() {
           username:      newUsername.trim(),
         }),
       });
+      setSavedUsername(newUsername.trim());
       setEditingName(false);
     } catch (e) {
       console.warn('username save failed:', e);
@@ -62,7 +77,7 @@ export default function ProfilePage() {
     }
   };
 
-  const displayName = user?.firstName || user?.name || 'Trader';
+  const displayName = savedUsername || user?.firstName || user?.name || 'Trader';
   const initials    = getInitials(displayName);
 
   // Computed trade stats

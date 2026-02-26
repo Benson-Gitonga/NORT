@@ -171,13 +171,30 @@ export async function paperTrade({ marketId, side, amount, price }) {
     question = m?.q || '';
   } catch {}
 
+  // Ensure the user/wallet exists in DB before trading
+  const userId = (wallet || 'dev_user').toLowerCase();
+  try {
+    await fetch(`${BASE}/api/wallet/connect`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ wallet_address: userId, telegram_id: userId }),
+    });
+  } catch {}
+
+  // price_per_share must be between 0 and 1 (e.g. 0.55 for 55¢)
+  // price coming in may be a percentage (55) or already decimal (0.55)
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  // shares = amount / price_per_share, minimum 1, capped to 1 decimal
+  const computedShares = parseFloat(amount) / normalizedPrice;
+  const shares = Math.max(1, Math.round(computedShares * 10) / 10);
+
   const body = {
-    telegram_user_id: (wallet || 'dev_user').toLowerCase(),
+    telegram_user_id: userId,
     market_id:        String(marketId),
     market_question:  question || `Market ${marketId}`,
     outcome:          (side || '').toUpperCase() === 'NO' ? 'NO' : 'YES',
-    shares:           Math.max(1, Math.round((parseFloat(amount) / price) * 10) / 10),
-    price_per_share:  price,
+    shares,
+    price_per_share:  normalizedPrice,
     direction:        'BUY',
   };
 
