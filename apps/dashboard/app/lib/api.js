@@ -25,38 +25,43 @@ const getStoredWallet = () => {
 
 // ─── SIGNALS ─────────────────────────────────────────────────────────────────
 
-export async function getSignals(filter = 'all') {
-  // Signals endpoint already embeds question, current_odds, volume, category —
-  // we only need the markets fetch as a secondary enrichment, not the source of truth.
-  const sigRes = await fetch(`${BASE}/signals/?top=20`);
+export async function getSignals(filter = 'all', category = 'crypto') {
+  // category: 'crypto' | 'sports' | 'all'
+  const categoryParam = category !== 'all' ? `&category=${category}` : '';
+  const sigRes = await fetch(`${BASE}/signals/?top=50${categoryParam}`);
   if (!sigRes.ok) throw new Error(`Failed to load signals`);
 
   const sigData = await sigRes.json();
   const rawSignals = Array.isArray(sigData) ? sigData : (sigData.signals || []);
 
-  const signals = rawSignals.map(s => {
-    const heatPct = Math.max(0, Math.min(100, Math.round((s.score || 0) * 100)));
-    const status  = heatPct >= 80 ? 'hot' : heatPct >= 50 ? 'warm' : 'cool';
+  // Sport categories
+  const SPORT_CATS = new Set(['NBA','NHL','Soccer','EPL','La Liga','Serie A','Bundesliga','Ligue 1','UCL','MLB','Tennis','Golf','Sports']);
+  const CRYPTO_CATS = new Set(['BTC','ETH','SOL','XRP','HYPE','Crypto']);
 
-    // FIX: use odds/question/category/volume directly from the signal object.
-    // The signals endpoint enriches these server-side — no second lookup needed.
-    // This prevents yes=0 (→ price=0 → Infinity shares) when a market isn't
-    // in the top-100 of the separate /markets/ response.
-    const rawOdds = s.current_odds ?? 0.5;
-    const yesInt  = Math.max(1, Math.min(99, Math.round(rawOdds * 100)));
+  const signals = rawSignals
+    .filter(s => {
+      if (category === 'crypto') return CRYPTO_CATS.has(s.category || 'Crypto');
+      if (category === 'sports') return SPORT_CATS.has(s.category || '');
+      return true;
+    })
+    .map(s => {
+      const heatPct = Math.max(0, Math.min(100, Math.round((s.score || 0) * 100)));
+      const status  = heatPct >= 80 ? 'hot' : heatPct >= 50 ? 'warm' : 'cool';
+      const rawOdds = s.current_odds ?? 0.5;
+      const yesInt  = Math.max(1, Math.min(99, Math.round(rawOdds * 100)));
 
-    return {
-      id:     s.market_id,
-      cat:    s.category || 'Crypto',
-      heat:   `${heatPct}° ${status.toUpperCase()}`,
-      status,
-      q:      s.question || s.reason || 'Unknown market',
-      yes:    yesInt,
-      vol:    abbr(s.volume || 0),
-      locked: (s.score || 0) >= 0.7,
-      advice: s.reason || '',
-    };
-  });
+      return {
+        id:     s.market_id,
+        cat:    s.category || 'Crypto',
+        heat:   `${heatPct}° ${status.toUpperCase()}`,
+        status,
+        q:      s.question || s.reason || 'Unknown market',
+        yes:    yesInt,
+        vol:    abbr(s.volume || 0),
+        locked: (s.score || 0) >= 0.7,
+        advice: s.reason || '',
+      };
+    });
 
   if (filter === 'all') return signals;
   return signals.filter(s => s.status === filter);

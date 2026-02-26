@@ -27,6 +27,32 @@ CRYPTO_TAGS = {
     "xrp", "hyperliquid", "megaeth", "stablecoins", "etf",
 }
 
+# Sport sub-tag → display category label
+SPORT_LABELS = {
+    "nba":              "NBA",
+    "basketball":       "NBA",
+    "nba-finals":       "NBA",
+    "nba-champion":     "NBA",
+    "hockey":           "NHL",
+    "nhl":              "NHL",
+    "stanley-cup":      "NHL",
+    "soccer":           "Soccer",
+    "fifa-world-cup":   "Soccer",
+    "2026-fifa-world-cup": "Soccer",
+    "world-cup":        "Soccer",
+    "EPL":              "EPL",
+    "la-liga":          "La Liga",
+    "serie-a":          "Serie A",
+    "bundesliga":       "Bundesliga",
+    "ligue-1":          "Ligue 1",
+    "champions-league": "UCL",
+    "ucl":              "UCL",
+    "baseball":         "MLB",
+    "mlb":              "MLB",
+    "tennis":           "Tennis",
+    "golf":             "Golf",
+}
+
 # Slug prefixes for automated 5min/15min/hourly markets
 CRYPTO_SLUG_PREFIXES = [
     "btc-updown-5m-",
@@ -65,10 +91,25 @@ def _get_coin_label(text: str) -> str:
     return "Crypto"
 
 
+def _get_sport_label(event_tags: list) -> str:
+    """Derive a sport category label from an event's tag list."""
+    slugs = [t["slug"] for t in event_tags]
+    for slug in slugs:
+        if slug in SPORT_LABELS:
+            return SPORT_LABELS[slug]
+    return "Sports"
+
+
 def _is_crypto_event(event: Dict) -> bool:
     """Returns True if this event belongs to the crypto category."""
     tags = {t["slug"] for t in (event.get("tags") or [])}
     return bool(tags & CRYPTO_TAGS)
+
+
+def _is_sports_event(event: Dict) -> bool:
+    """Returns True if this event belongs to the sports category."""
+    tags = {t["slug"] for t in (event.get("tags") or [])}
+    return "sports" in tags
 
 
 def _fetch_events(params: dict) -> List[Dict]:
@@ -155,18 +196,54 @@ def fetch_short_term_crypto_markets(limit: int = 300) -> List[Dict]:
     return all_markets[:limit]
 
 
-def _extract_markets(event: Dict) -> List[Dict]:
+def fetch_sports_markets(limit: int = 300) -> List[Dict]:
+    """
+    Fetch all active sports markets from Polymarket.
+    Covers NBA, NHL, Soccer (FIFA/EPL/La Liga/UCL etc), and other sports.
+    Category field is set to the specific sport (NBA, NHL, Soccer, EPL etc.)
+    so the frontend can filter by sport within the Sports tab.
+    """
+    all_markets: List[Dict] = []
+    seen_ids: set = set()
+
+    def _add(market_dict: Dict):
+        mid = market_dict.get("id")
+        if mid and mid not in seen_ids:
+            seen_ids.add(mid)
+            all_markets.append(market_dict)
+
+    events = _fetch_events({
+        "active":   "true",
+        "closed":   "false",
+        "limit":    100,
+        "tag_slug": "sports",
+        "_sort":    "volume24hr",
+        "_order":   "desc",
+    })
+
+    for ev in events:
+        if not _is_sports_event(ev):
+            continue
+        sport_label = _get_sport_label(ev.get("tags") or [])
+        for m in _extract_markets(ev, category_override=sport_label):
+            _add(m)
+
+    print(f"[Polymarket] Total sports markets collected: {len(all_markets)}")
+    all_markets.sort(key=lambda m: m.get("volume", 0), reverse=True)
+    return all_markets[:limit]
+
+
+def _extract_markets(event: Dict, category_override: str = None) -> List[Dict]:
     """Extract and parse all child markets from a Polymarket event."""
     results = []
     event_title = event.get("title") or ""
-    # Pass event-level volume fields down so parse_market can use them
-    event_v24  = event.get("volume24hr") or 0
-    event_v1wk = event.get("volume1wk") or 0
+    event_v24   = event.get("volume24hr") or 0
+    event_v1wk  = event.get("volume1wk") or 0
 
     for m in (event.get("markets") or []):
         if not m.get("question"):
             m["question"] = event_title
-        parsed = parse_market(m, event_title, event_v24, event_v1wk)
+        parsed = parse_market(m, event_title, event_v24, event_v1wk, category_override)
         if parsed:
             results.append(parsed)
     return results
@@ -177,6 +254,7 @@ def parse_market(
     event_title: str = "",
     event_v24: float = 0,
     event_v1wk: float = 0,
+    category_override: str = None,
 ) -> Optional[Dict]:
     """
     Converts a raw Polymarket market item into our Market schema dict.
@@ -225,7 +303,7 @@ def parse_market(
     return {
         "id":            market_id,
         "question":      question,
-        "category":      _get_coin_label(question),
+        "category":      category_override or _get_coin_label(question),
         "current_odds":  current_odds,
         # FIX for issue #7: previous_odds is intentionally None for new markets.
         # On a brand-new insert, markets.py will store 0.5 as default.

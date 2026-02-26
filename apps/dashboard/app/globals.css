@@ -1384,3 +1384,44 @@ body::after {
   .ach-grid { grid-template-columns: repeat(4, 1fr); }
   .ach-popup { left: 50%; transform: translateX(-50%); max-width: 400px; }
 }
+/* ── Category toggle (Crypto / Sports) ─────────────────────────────────── */
+.cat-toggle-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 4px;
+  margin-bottom: 4px;
+}
+
+.cat-toggle-btn {
+  flex: 1;
+  padding: 10px 0;
+  border-radius: 12px;
+  border: 1.5px solid var(--border, rgba(255,255,255,0.08));
+  background: transparent;
+  color: var(--text-muted, rgba(255,255,255,0.45));
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  letter-spacing: 0.02em;
+}
+
+.cat-toggle-btn:hover {
+  border-color: var(--teal, #00d2c8);
+  color: var(--teal, #00d2c8);
+}
+
+.cat-toggle-btn.active {
+  background: rgba(0, 210, 200, 0.12);
+  border-color: var(--teal, #00d2c8);
+  color: var(--teal, #00d2c8);
+  box-shadow: 0 0 12px rgba(0, 210, 200, 0.15);
+}
+
+@media (min-width: 768px) {
+  .cat-toggle-row {
+    padding: 0 0 8px;
+    max-width: 320px;
+  }
+}

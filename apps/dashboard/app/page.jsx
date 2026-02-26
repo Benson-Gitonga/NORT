@@ -11,12 +11,17 @@ import TradeModal from '@/components/TradeModal';
 import ChatSheet from '@/components/ChatSheet';
 import SkeletonCard from '@/components/SkeletonCard';
 
-const FILTERS = ['all', 'hot', 'warm', 'cool'];
+const FILTERS   = ['all', 'hot', 'warm', 'cool'];
+const CATEGORIES = [
+  { id: 'crypto', label: '📈 Crypto' },
+  { id: 'sports', label: '🏆 Sports' },
+];
 
 export default function FeedPage() {
   const { user } = useTelegram();
   const [signals, setSignals]         = useState([]);
   const [loading, setLoading]         = useState(true);
+  const [category, setCategory]       = useState('crypto');
   const [filter, setFilter]           = useState('all');
   const [tradeSignal, setTradeSignal] = useState(null);
   const [tradeSide, setTradeSide]     = useState('yes');
@@ -25,8 +30,8 @@ export default function FeedPage() {
 
   useEffect(() => {
     setLoading(true);
-    getSignals(filter).then(setSignals).finally(() => setLoading(false));
-  }, [filter]);
+    getSignals(filter, category).then(setSignals).finally(() => setLoading(false));
+  }, [filter, category]);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
   const handleTrade = (signal, side) => { setTradeSignal(signal); setTradeSide(side); };
@@ -65,6 +70,19 @@ export default function FeedPage() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Crypto / Sports category toggle */}
+          <div className="cat-toggle-row fu d1">
+            {CATEGORIES.map(c => (
+              <button
+                key={c.id}
+                className={`cat-toggle-btn ${category === c.id ? 'active' : ''}`}
+                onClick={() => { setCategory(c.id); setFilter('all'); }}
+              >
+                {c.label}
+              </button>
+            ))}
           </div>
 
           {/* Card grid */}

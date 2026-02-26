@@ -1,18 +1,21 @@
 # markets.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
 from sqlmodel import Session, select, text
 from datetime import datetime
 
 from services.backend.data.database import engine
 from services.backend.data.models import Market
-from services.backend.core.polymarket import fetch_short_term_crypto_markets
+from services.backend.core.polymarket import fetch_short_term_crypto_markets, fetch_sports_markets
 
 router = APIRouter(prefix="/markets", tags=["Markets"], redirect_slashes=False)
 
 
 def sync_markets(session: Session = None):
-    """Fetch crypto markets from Polymarket and upsert into DB."""
-    fresh_markets = fetch_short_term_crypto_markets(limit=300)
+    """Fetch crypto + sports markets from Polymarket and upsert into DB."""
+    crypto_markets = fetch_short_term_crypto_markets(limit=300)
+    sports_markets = fetch_sports_markets(limit=300)
+    fresh_markets  = crypto_markets + sports_markets
 
     if not fresh_markets:
         print("[sync] No markets returned from Polymarket.")
@@ -59,7 +62,7 @@ def sync_markets(session: Session = None):
                 print(f"[sync] Skipping {parsed.get('id')}: {e}")
 
         s.commit()
-        print(f"[sync] Upserted {saved} crypto markets.")
+        print(f"[sync] Upserted {saved} crypto + sports markets.")
 
     if session:
         _do_sync(session)
@@ -96,15 +99,29 @@ def debug_polymarket():
 
 
 @router.get("/")
-def get_markets(limit: int = 100, sort_by: str = "volume"):
+def get_markets(
+    limit: int = 500,
+    sort_by: str = "volume",
+    category: Optional[str] = Query(default=None, description="Filter by category group: 'crypto' or 'sports'"),
+):
+    # Categories that belong to each group
+    CRYPTO_CATS = {"BTC", "ETH", "SOL", "XRP", "HYPE", "Crypto"}
+    SPORTS_CATS = {"NBA", "NHL", "Soccer", "EPL", "La Liga", "Serie A",
+                   "Bundesliga", "Ligue 1", "UCL", "MLB", "Tennis", "Golf", "Sports"}
+
     with Session(engine) as session:
-        # Auto-sync if DB is empty
         total = len(session.exec(select(Market)).all())
         if total == 0:
             print("[markets] DB empty — syncing...")
             sync_markets(session)
 
         statement = select(Market).where(Market.is_active == True)
+
+        if category and category.lower() == "crypto":
+            statement = statement.where(Market.category.in_(list(CRYPTO_CATS)))
+        elif category and category.lower() == "sports":
+            statement = statement.where(Market.category.in_(list(SPORTS_CATS)))
+
         if sort_by == "volume":
             statement = statement.order_by(Market.volume.desc())
         statement = statement.limit(limit)
