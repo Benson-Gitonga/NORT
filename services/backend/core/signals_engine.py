@@ -15,6 +15,10 @@ MIN_LIQUIDITY = 1000.0      # Markets below this are too thin to trade
 MOMENTUM_WEIGHT = 0.5       # How much price movement matters in final score
 VOLUME_WEIGHT = 0.5         # How much volume spike matters in final score
 
+# Markets with odds outside this range are effectively resolved — no trading value
+MIN_TRADEABLE_ODDS = 0.05   # 5%
+MAX_TRADEABLE_ODDS = 0.95   # 95%
+
 
 # ─────────────────────────────────────────────
 # STEP 1 — LIQUIDITY FILTER
@@ -22,13 +26,23 @@ VOLUME_WEIGHT = 0.5         # How much volume spike matters in final score
 # If a market fails this, it never gets ranked.
 # ─────────────────────────────────────────────
 
-def passes_liquidity_filter(market: Dict) -> bool:
+def passes_market_filter(market: Dict) -> bool:
     """
-    Returns True if the market has enough liquidity to be worth ranking.
-    Uses the 'volume' field as a proxy for liquidity.
+    Returns True if the market passes both liquidity and odds filters.
+
+    A market is excluded if:
+      - Volume is below MIN_LIQUIDITY (too thin to trade)
+      - current_odds is outside 5%-95% (effectively already resolved)
     """
     volume = market.get("volume", 0)
-    return volume >= MIN_LIQUIDITY
+    if volume < MIN_LIQUIDITY:
+        return False
+
+    odds = market.get("current_odds", 0.5)
+    if odds < MIN_TRADEABLE_ODDS or odds > MAX_TRADEABLE_ODDS:
+        return False
+
+    return True
 
 
 # ─────────────────────────────────────────────
@@ -158,8 +172,8 @@ def rank_markets(markets: List[Dict], top: int = 20) -> List[Dict]:
       - current_odds
       - volume
     """
-    # Step 1: filter
-    liquid_markets = [m for m in markets if passes_liquidity_filter(m)]
+    # Step 1: filter — liquidity + odds range
+    liquid_markets = [m for m in markets if passes_market_filter(m)]
 
     # Step 2 & 3: score and sort
     scored = sorted(liquid_markets, key=composite_score, reverse=True)

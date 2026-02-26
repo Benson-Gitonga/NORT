@@ -10,6 +10,10 @@ from services.backend.core.polymarket import fetch_short_term_crypto_markets, fe
 
 router = APIRouter(prefix="/markets", tags=["Markets"], redirect_slashes=False)
 
+# Mirrors the threshold in polymarket.py and signals_engine.py
+MIN_TRADEABLE_ODDS = 0.05
+MAX_TRADEABLE_ODDS = 0.95
+
 
 def sync_markets(session: Session = None):
     """Fetch crypto + sports markets from Polymarket and upsert into DB."""
@@ -115,7 +119,11 @@ def get_markets(
             print("[markets] DB empty — syncing...")
             sync_markets(session)
 
-        statement = select(Market).where(Market.is_active == True)
+        statement = select(Market).where(
+            Market.is_active == True,
+            Market.current_odds >= MIN_TRADEABLE_ODDS,
+            Market.current_odds <= MAX_TRADEABLE_ODDS,
+        )
 
         if category and category.lower() == "crypto":
             statement = statement.where(Market.category.in_(list(CRYPTO_CATS)))

@@ -21,6 +21,10 @@ from typing import List, Dict, Optional
 
 GAMMA_API = os.getenv("POLYMARKET_API_URL", "https://gamma-api.polymarket.com")
 
+# Markets with odds outside this range are effectively resolved — drop at source
+MIN_TRADEABLE_ODDS = 0.05   # 5%
+MAX_TRADEABLE_ODDS = 0.95   # 95%
+
 # Tags that identify an event as crypto-related
 CRYPTO_TAGS = {
     "crypto", "crypto-prices", "bitcoin", "ethereum", "solana",
@@ -281,6 +285,10 @@ def parse_market(
             current_odds = 0.5
     except Exception:
         current_odds = 0.5
+
+    # Drop markets that are effectively resolved — no trading value
+    if current_odds < MIN_TRADEABLE_ODDS or current_odds > MAX_TRADEABLE_ODDS:
+        return None
 
     # Parse expiry
     try:
