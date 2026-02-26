@@ -3,5 +3,5 @@ uvicorn          # The server to run FastAPI
 sqlmodel         # Combines SQLAlchemy and Pydantic for the database
 python-dotenv    # To manage your .env file
 httpx            # To fetch data from the Polymarket API
-ddgs             # DuckDuckGo Search (renamed from duckduckgo-search)
+tavily-python    # Tavily Search API (replaces DuckDuckGo)
 psycopg2-binary  # PostgreSQL driver for Neon
