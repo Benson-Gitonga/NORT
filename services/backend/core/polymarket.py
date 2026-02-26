@@ -28,9 +28,10 @@ def _is_crypto_market(item: Dict) -> bool:
     return any(kw in combined for kw in CRYPTO_KEYWORDS)
 
 
-def fetch_short_term_crypto_markets(limit: int = 200) -> List[Dict]:
+def fetch_short_term_crypto_markets(limit: int = 500) -> List[Dict]:
     """Fetches active markets from Polymarket and returns crypto-related ones."""
     url = f"{POLYMARKET_API_URL}/markets"
+    # Fetch a large pool — category is null on all markets so we filter by keyword
     params = {"active": "true", "closed": "false", "limit": limit}
 
     try:

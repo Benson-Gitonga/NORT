@@ -115,14 +115,11 @@ def refresh_markets():
 
 @router.get("/debug-polymarket")
 def debug_polymarket():
-    """
-    Hits Polymarket API directly and shows what comes back — no DB involved.
-    Use this to diagnose why markets aren't being fetched.
-    GET /markets/debug-polymarket
-    """
-    import httpx, os, json as _json
+    """Hits Polymarket API directly — shows raw response for debugging."""
+    import httpx, os
     url = f"{os.getenv('POLYMARKET_API_URL', 'https://gamma-api.polymarket.com')}/markets"
-    params = {"active": "true", "closed": "false", "limit": 10}
+    # Fetch 50 sorted by volume, show which ones pass the crypto filter
+    params = {"active": "true", "closed": "false", "limit": 50, "sort_by": "volume24hr", "ascending": "false"}
     try:
         with httpx.Client(timeout=15.0) as client:
             r = client.get(url, params=params)
@@ -130,20 +127,21 @@ def debug_polymarket():
     except Exception as e:
         return {"error": str(e)}
 
+    from services.backend.core.polymarket import _is_crypto_market
     items = raw if isinstance(raw, list) else raw.get("markets") or raw.get("data") or []
+    crypto_hits = [i for i in items if _is_crypto_market(i)]
+
     return {
-        "response_type": type(raw).__name__,
-        "count": len(items),
-        "sample": [
-            {
-                "id":       i.get("id"),
-                "question": (i.get("question") or "")[:80],
-                "category": i.get("category"),
-                "endDate":  i.get("endDate"),
-                "active":   i.get("active"),
-                "volume24hr": i.get("volume24hr"),
-            }
-            for i in items[:5]
+        "total_fetched": len(items),
+        "crypto_matches": len(crypto_hits),
+        "all_categories": list(set(i.get("category") for i in items)),
+        "crypto_sample": [
+            {"id": i.get("id"), "question": (i.get("question") or "")[:80], "volume24hr": i.get("volume24hr")}
+            for i in crypto_hits[:10]
+        ],
+        "non_crypto_sample": [
+            {"id": i.get("id"), "question": (i.get("question") or "")[:80]}
+            for i in items[:5] if not _is_crypto_market(i)
         ]
     }
 
