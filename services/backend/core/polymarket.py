@@ -87,10 +87,12 @@ def fetch_short_term_crypto_markets(limit: int = 300) -> List[Dict]:
         try:
             with httpx.Client(timeout=15.0) as client:
                 r = client.get(f"{GAMMA_API}/events", params={
-                    "active":  "true",
-                    "closed":  "false",
-                    "limit":   50,
-                    "slug":    coin_prefix,  # prefix search
+                    "active":   "true",
+                    "closed":   "false",
+                    "limit":    50,
+                    "slug":     coin_prefix,
+                    "_sort":    "end_date",
+                    "_order":   "desc",   # newest ending first = most current
                 })
                 data = r.json()
                 if isinstance(data, dict):
@@ -113,6 +115,8 @@ def fetch_short_term_crypto_markets(limit: int = 300) -> List[Dict]:
                     "closed":   "false",
                     "limit":    50,
                     "tag_slug": tag,
+                    "_sort":    "end_date",
+                    "_order":   "desc",
                 })
                 data = r.json()
                 if isinstance(data, dict):
@@ -137,6 +141,8 @@ def fetch_short_term_crypto_markets(limit: int = 300) -> List[Dict]:
                     "closed":  "false",
                     "limit":   30,
                     "search":  query,
+                    "_sort":   "end_date",
+                    "_order":  "desc",
                 })
                 data = r.json()
                 if isinstance(data, dict):
@@ -151,6 +157,10 @@ def fetch_short_term_crypto_markets(limit: int = 300) -> List[Dict]:
             print(f"[Polymarket] Search error for '{query}': {e}")
 
     print(f"[Polymarket] Total short-term crypto markets found: {len(all_markets)}")
+
+    # Sort by volume desc — active markets with real trading show first
+    all_markets.sort(key=lambda m: m.get("volume", 0), reverse=True)
+
     return all_markets[:limit]
 
 
