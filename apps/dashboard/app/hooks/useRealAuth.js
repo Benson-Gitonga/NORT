@@ -1,34 +1,82 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useTelegram } from "./useTelegram";
 
+const BASE_CHAIN_ID = 8453;           // Base mainnet
+const BASE_CHAIN_ID_HEX = "0x2105";  // 8453 in hex — used by MetaMask eth_chainId
+
 export function useRealAuth() {
-  const { ready: privyReady, authenticated, user, login: privyLogin, logout: privyLogout } = usePrivy();
+  const {
+    ready: privyReady,
+    authenticated,
+    user,
+    login: privyLogin,
+    logout: privyLogout,
+  } = usePrivy();
   const { wallets } = useWallets();
   const { user: tgUser } = useTelegram();
 
   const [initialized, setInitialized] = useState(false);
+  const [chainSwitchError, setChainSwitchError] = useState(null);
 
-  // On mount: mark as initialized
-  useEffect(() => {
-    setInitialized(true);
+  useEffect(() => { setInitialized(true); }, []);
+
+  // ─── FIND THE RIGHT WALLET ─────────────────────────────────────────────────
+  // Privy embedded wallet (created by Privy for Google/email users)
+  const embeddedWallet = wallets?.find(w => w.walletClientType === "privy");
+
+  // External wallet (MetaMask, Coinbase, Rainbow etc.)
+  const externalWallet = wallets?.find(w => w.walletClientType !== "privy");
+
+  // Active wallet: prefer embedded (it will be on Base), fall back to external
+  const activeWallet = embeddedWallet || externalWallet || null;
+  const privyWalletAddress = activeWallet?.address || null;
+
+  // ─── FORCE BASE CHAIN ON ALL WALLETS ──────────────────────────────────────
+  // This runs whenever wallets change (new connection, page load).
+  // For embedded wallets: Privy's switchChain migrates the wallet to Base.
+  // For external wallets: sends wallet_switchEthereumChain to MetaMask.
+  const switchToBase = useCallback(async (wallet) => {
+    if (!wallet) return;
+    try {
+      // Check current chain first to avoid unnecessary prompts
+      const currentChainId = wallet.chainId; // format: "eip155:8453" or just number
+      const currentId = typeof currentChainId === "string"
+        ? parseInt(currentChainId.replace("eip155:", ""))
+        : currentChainId;
+
+      if (currentId === BASE_CHAIN_ID) return; // Already on Base
+
+      await wallet.switchChain(BASE_CHAIN_ID);
+      setChainSwitchError(null);
+    } catch (err) {
+      // Don't block the app if chain switch fails — just log it
+      // MetaMask will show its own error if user rejects
+      console.warn("[useRealAuth] Chain switch to Base failed:", err?.message);
+      setChainSwitchError(err?.message || "Chain switch failed");
+    }
   }, []);
 
-  // Persist wallet address to localStorage whenever Privy gives us one
-  // (api.js reads this for API calls)
-  const privyWalletAddress = wallets?.[0]?.address || null;
+  // Switch ALL connected wallets to Base when they appear
+  useEffect(() => {
+    if (!wallets?.length || !authenticated) return;
+    wallets.forEach(w => switchToBase(w));
+  }, [wallets, authenticated, switchToBase]);
+
+  // Persist wallet address to localStorage for lib/api.js
   useEffect(() => {
     if (!privyWalletAddress) return;
-    try { window.localStorage.setItem("walletAddress", privyWalletAddress); } catch {}
+    try {
+      window.localStorage.setItem("walletAddress", privyWalletAddress.toLowerCase());
+    } catch {}
   }, [privyWalletAddress]);
 
-  // walletAddress: only the live Privy wallet — do NOT fall back to localStorage.
-  // Falling back to localStorage kept isAuthed=true after logout (stale value).
-  const walletAddress = privyWalletAddress || (tgUser ? `tg_${tgUser.id}` : null);
+  const walletAddress =
+    privyWalletAddress || (tgUser ? `tg_${tgUser.id}` : null);
 
-  // isAuthed: Privy authenticated is the source of truth.
-  const isAuthed = !!privyReady && initialized && (!!authenticated || !!tgUser);
+  const isAuthed =
+    !!privyReady && initialized && (!!authenticated || !!tgUser);
 
   const logout = async () => {
     try { await privyLogout(); } catch {}
@@ -40,32 +88,59 @@ export function useRealAuth() {
     window.location.href = "/";
   };
 
+  // ─── WALLET TYPE ──────────────────────────────────────────────────────────
+  const walletType = embeddedWallet
+    ? "embedded"   // Privy-managed, on Base
+    : externalWallet
+    ? "external"   // MetaMask / Coinbase / Rainbow (switched to Base above)
+    : tgUser
+    ? "telegram"
+    : null;
+
+  // ─── CHAIN STATUS ─────────────────────────────────────────────────────────
+  const activeChainId = activeWallet?.chainId
+    ? parseInt(String(activeWallet.chainId).replace("eip155:", ""))
+    : null;
+  const isOnBase = activeChainId === BASE_CHAIN_ID;
+
   const combinedUser = user
     ? {
-        id:    user.id,
-        firstName: user.google?.name?.split(" ")[0]
-                   || user.email?.address?.split("@")[0]
-                   || null,
-        name:  user.google?.name || user.email?.address || null,
-        email: user.email?.address || user.google?.email || null,
+        id:           user.id,
+        privyUserId:  user.id,
+        firstName:
+          user.google?.name?.split(" ")[0] ||
+          user.email?.address?.split("@")[0] ||
+          null,
+        name:   user.google?.name  || user.email?.address  || null,
+        email:  user.email?.address || user.google?.email  || null,
         walletAddress,
+        walletType,
+        isOnBase,
       }
     : tgUser
     ? {
-        id:    tgUser.id?.toString(),
-        firstName: tgUser.first_name || null,
-        name:  tgUser.first_name || null,
-        email: null,
+        id:          tgUser.id?.toString(),
+        privyUserId: null,
+        firstName:   tgUser.first_name || null,
+        name:        tgUser.first_name || null,
+        email:       null,
         walletAddress,
+        walletType:  "telegram",
+        isOnBase:    null,
       }
     : null;
 
   return {
-    ready:        !!privyReady && initialized,
+    ready:           !!privyReady && initialized,
     isAuthed,
-    user:         combinedUser,
+    user:            combinedUser,
     walletAddress,
-    login:        privyLogin,
+    walletType,
+    isOnBase,
+    activeChainId,
+    chainSwitchError,
+    switchToBase:    () => switchToBase(activeWallet),
+    login:           privyLogin,
     logout,
   };
 }
