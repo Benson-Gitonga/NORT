@@ -14,8 +14,10 @@
     "clsx": "latest",
     "lucide-react": "latest",
     "next": "latest",
+    "permissionless": "^0.2.57",
     "react": "latest",
     "react-dom": "latest",
-    "tailwind-merge": "latest"
+    "tailwind-merge": "latest",
+    "viem": "^2.0.0"
   }
 }

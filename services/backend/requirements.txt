@@ -5,3 +5,4 @@ python-dotenv    # To manage your .env file
 httpx            # To fetch data from the Polymarket API
 tavily-python    # Tavily Search API (replaces DuckDuckGo)
 psycopg2-binary  # PostgreSQL driver for Neon
+svix             # Webhook verification for Privy (whsec_ signing key)
