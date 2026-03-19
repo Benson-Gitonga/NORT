@@ -348,3 +348,68 @@ export async function getAchievements() {
   const data = await res.json();
   return data.achievements || [];
 }
+
+// ─── BRIDGE (Phase 2 — LI.FI Base → Polygon) ────────────────────────────────
+
+export async function getBridgeQuote(amountUsdc) {
+  const wallet = getStoredWallet();
+  if (!wallet) throw new Error('No wallet connected');
+  const res = await fetch(
+    `${BASE}/api/bridge/quote?wallet_address=${encodeURIComponent(wallet)}&amount_usdc=${amountUsdc}`
+  );
+  if (!res.ok) throw new Error(`Bridge quote failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function startBridge(amountUsdc, lifiTxHash) {
+  const wallet = getStoredWallet();
+  if (!wallet) throw new Error('No wallet connected');
+  const res = await fetch(`${BASE}/api/bridge/start`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      wallet_address: wallet,
+      amount_usdc:    amountUsdc,
+      lifi_tx_hash:   lifiTxHash,
+    }),
+  });
+  if (!res.ok) throw new Error(`Bridge start failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function getBridgeStatus(bridgeId) {
+  const res = await fetch(`${BASE}/api/bridge/status/${bridgeId}`);
+  if (!res.ok) throw new Error(`Bridge status failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function getBridgeHistory() {
+  const wallet = getStoredWallet();
+  if (!wallet) return { total: 0, bridges: [] };
+  const res = await fetch(
+    `${BASE}/api/bridge/history?wallet_address=${encodeURIComponent(wallet)}`
+  );
+  if (!res.ok) return { total: 0, bridges: [] };
+  return await res.json();
+}
+
+// ─── REAL BALANCE ─────────────────────────────────────────────────────────────
+
+export async function getFullWallet() {
+  const wallet = getStoredWallet();
+  if (!wallet) return { paperBalance: 0, realBalanceUsdc: 0, tradingMode: 'paper', pnl: 0, trades: 0 };
+
+  const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
+  if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`);
+  const w = await res.json();
+  return {
+    paperBalance:    w.paper_balance       ?? 0,
+    realBalanceUsdc: w.real_balance_usdc   ?? 0,
+    tradingMode:     w.trading_mode        ?? 'paper',
+    pnl:             w.net_pnl             ?? 0,
+    pnlPct:          w.net_pnl_pct         ?? 0,
+    trades:          w.total_trades        ?? 0,
+    // keep legacy shape too
+    balance:         w.paper_balance       ?? 0,
+  };
+}

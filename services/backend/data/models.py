@@ -74,11 +74,11 @@ class PaperTrade(SQLModel, table=True):
     telegram_user_id: str = Field(index=True)
     market_id: str
     market_question: str
-    outcome: str                     # "YES" or "NO"
+    outcome: str
     shares: float
     price_per_share: float
     total_cost: float
-    direction: str                   # "BUY" or "SELL"
+    direction: str
     status: str = Field(default="OPEN")
     tx_hash: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -100,32 +100,93 @@ class LeaderboardSnapshot(SQLModel, table=True):
 
 # 8. WalletConfig Table
 class WalletConfig(SQLModel, table=True):
-    """
-    Per-user wallet settings and balances.
-
-    trading_mode: 'paper' (default) | 'real'
-        Stored in DB — frontend cannot override this.
-        Switch is gated only by user confirmation (no KYC required).
-
-    real_balance_usdc: Cached on-chain USDC on Base.
-        Updated by Privy webhook (funds.deposited).
-    """
     __tablename__ = "wallet_config"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True, unique=True)
-
-    # Paper trading
     paper_balance: float = Field(default=1000.0)
     total_deposited: float = Field(default=1000.0)
-
-    # Trading mode — only 'paper' and 'real', no KYC gate
     trading_mode: str = Field(default="paper")
-
-    # Real on-chain balance (Phase 2+)
     real_balance_usdc: float = Field(default=0.0)
     last_balance_sync: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+# 9. BridgeTransaction Table  ← Phase 2: LI.FI bridge state tracking
+class BridgeTransaction(SQLModel, table=True):
+    """
+    Tracks every LI.FI bridge request from Base → Polygon (and back).
+
+    Lifecycle:
+      pending   → bridge tx submitted to Base
+      bridging  → tx confirmed on Base, waiting for Polygon arrival
+      done      → USDC arrived on Polygon, ready to trade
+      failed    → bridge timed out or reverted
+      refunded  → LI.FI issued a refund back to Base
+    """
+    __tablename__ = "bridge_transactions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    wallet_address: str                          # Base wallet that initiated
+
+    # Amounts
+    amount_usdc: float                           # USDC being bridged
+    from_chain: str = Field(default="BASE")      # always BASE for now
+    to_chain: str = Field(default="POL")         # always Polygon for now
+
+    # LI.FI tracking
+    lifi_tx_hash: Optional[str] = None           # tx hash on Base (sending side)
+    lifi_receiving_tx_hash: Optional[str] = None # tx hash on Polygon (receiving side)
+    lifi_tool: Optional[str] = None              # bridge tool used (e.g. "stargate")
+
+    # Status
+    status: str = Field(default="pending")       # pending|bridging|done|failed|refunded
+    error_message: Optional[str] = None
 
     # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+    # Link to the real trade that triggered this bridge (optional)
+    real_trade_id: Optional[int] = None
+
+# 10. RealTrade Table  ← Phase 2: real on-chain trade history
+class RealTrade(SQLModel, table=True):
+    """
+    Stores real on-chain trades on Polymarket (Polygon).
+    Separate from PaperTrade so paper history is never contaminated.
+
+    status: pending_bridge → bridging → pending_execution → open → closed → failed
+    """
+    __tablename__ = "real_trades"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    wallet_address: str
+
+    # Market info
+    market_id: str
+    market_question: str
+    outcome: str                                 # YES or NO
+    shares: float
+    price_per_share: float                       # price at execution
+    total_cost_usdc: float
+
+    # Bridge
+    bridge_tx_id: Optional[int] = None          # FK to BridgeTransaction
+    bridged_amount_usdc: float = Field(default=0.0)
+
+    # On-chain execution
+    polymarket_order_id: Optional[str] = None   # Polymarket CLOB order ID
+    polygon_tx_hash: Optional[str] = None       # tx hash on Polygon
+
+    # Result
+    status: str = Field(default="pending_bridge")
+    pnl: Optional[float] = None
+    settled_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
