@@ -1,28 +1,15 @@
 """
 Core paper trading logic for NORT.
 
-How Polymarket mechanics work (what we simulate):
-  YES price + NO price = $1.00 always
-  - Buy N YES shares at 60c  → cost = N * 0.60
-  - Price moves to 75c       → current value = N * 0.75
-  - Sell early               → payout = N * current_price, P&L = payout - cost
-  - Market resolves YES      → payout = N * $1.00,         P&L = payout - cost
-  - Market resolves NO       → payout = $0,                P&L = -cost
-
-Settlement happens two ways:
-  1. User sells early (sell_trade) — exits at current market price
-  2. Market resolves (settle_trade) — payout at $1 or $0
-
-Auto-settlement runs on every wallet/summary fetch.
-
 Trading Mode Router
 ───────────────────
-All trade entry points go through execute_trade() which checks the user's
-trading_mode in WalletConfig before dispatching:
-  'paper' → place_paper_trade() (no blockchain, always safe)
-  'real'  → real_trading_engine (Phase 4, not yet implemented)
+execute_trade() is the single entry point for all trade execution.
+It checks trading_mode in WalletConfig:
+  'paper' → place_paper_trade()  (no blockchain, always safe)
+  'real'  → Phase 4 stub         (raises until implemented)
 
-The mode is stored in the DB only — the frontend never controls routing.
+Mode is stored in DB only. No KYC gate. No balance gate.
+Switching modes only requires user confirmation (warning modal in the UI).
 """
 
 import hashlib
@@ -40,7 +27,6 @@ from services.backend.data.models import User, WalletConfig, PaperTrade, Market
 # ─── TRADING MODE ROUTER ─────────────────────────────────────────────────────
 
 class TradingModeError(Exception):
-    """Raised when a trade is blocked by mode/balance/KYC gates."""
     pass
 
 
@@ -56,14 +42,7 @@ def execute_trade(
 ):
     """
     Single entry point for ALL trade execution.
-
-    Checks the user's trading_mode in WalletConfig and routes to the
-    correct engine. The frontend/API layer always calls this — never
-    calls place_paper_trade() or real_trading_engine() directly.
-
-    Current modes:
-      'paper' → place_paper_trade()   ← implemented, safe, no blockchain
-      'real'  → real_trading_engine() ← Phase 4 stub, raises until implemented
+    Routes to paper or real engine based on DB trading_mode.
     """
     telegram_user_id = str(telegram_user_id)
     config = _ensure_wallet_config(telegram_user_id, session)
@@ -81,22 +60,9 @@ def execute_trade(
         )
 
     elif config.trading_mode == "real":
-        # ── Gate 1: KYC ──────────────────────────────────────────────────────
-        if config.kyc_status != "approved":
-            raise TradingModeError(
-                "KYC required for real trading. "
-                "Complete identity verification before switching to real mode."
-            )
-        # ── Gate 2: Minimum balance ───────────────────────────────────────────
-        trade_value = round(shares * price_per_share, 2)
-        if config.real_balance_usdc < trade_value:
-            raise TradingModeError(
-                f"Insufficient real balance. "
-                f"Have ${config.real_balance_usdc:.2f} USDC, need ${trade_value:.2f}."
-            )
-        # ── Phase 4: real on-chain execution (not yet implemented) ────────────
+        # Phase 4: real on-chain execution — not yet implemented
         raise TradingModeError(
-            "Real trading is not yet enabled. "
+            "Real on-chain trading is coming in Phase 4. "
             "Switch back to paper mode to continue trading."
         )
 
@@ -143,7 +109,6 @@ def _ensure_wallet_config(telegram_user_id, session):
             paper_balance=1000.0,
             total_deposited=1000.0,
             trading_mode="paper",
-            kyc_status="none",
             real_balance_usdc=0.0,
         )
         session.add(config)
@@ -160,7 +125,7 @@ def get_user_by_telegram(telegram_id, session):
     return session.exec(select(User).where(User.telegram_id == str(telegram_id))).first()
 
 
-# ─── PLACE A PAPER TRADE (internal — called by execute_trade) ────────────────
+# ─── PLACE A PAPER TRADE ─────────────────────────────────────────────────────
 
 def place_paper_trade(telegram_user_id, market_id, market_question, outcome,
                       shares, price_per_share, direction, session):
@@ -215,14 +180,12 @@ def sell_trade(trade_id, session):
     if not trade:
         raise ValueError(f"Trade {trade_id} not found.")
     if trade.status != "OPEN":
-        raise ValueError(f"Trade {trade_id} is already {trade.status} — cannot sell.")
+        raise ValueError(f"Trade {trade_id} is already {trade.status}.")
 
     market = session.get(Market, str(trade.market_id))
     if market:
-        if trade.outcome == "YES":
-            current_price = float(market.current_odds)
-        else:
-            current_price = round(1.0 - float(market.current_odds), 6)
+        current_price = float(market.current_odds) if trade.outcome == "YES" \
+                        else round(1.0 - float(market.current_odds), 6)
     else:
         current_price = trade.price_per_share
 
@@ -269,10 +232,8 @@ def get_position_value(trade_id, session):
 
     market = session.get(Market, str(trade.market_id))
     if market:
-        if trade.outcome == "YES":
-            current_price = float(market.current_odds)
-        else:
-            current_price = round(1.0 - float(market.current_odds), 6)
+        current_price = float(market.current_odds) if trade.outcome == "YES" \
+                        else round(1.0 - float(market.current_odds), 6)
     else:
         current_price = trade.price_per_share
 
@@ -349,14 +310,9 @@ def settle_trade(trade_id, session):
         result = "EXPIRED"
     else:
         won = (trade.outcome == resolution)
-        if won:
-            payout = round(trade.shares * 1.0, 6)
-            pnl    = round(payout - trade.total_cost, 6)
-            result = "WIN"
-        else:
-            payout = 0.0
-            pnl    = round(-trade.total_cost, 6)
-            result = "LOSS"
+        payout = round(trade.shares * 1.0, 6) if won else 0.0
+        pnl    = round(payout - trade.total_cost, 6)
+        result = "WIN" if won else "LOSS"
 
     trade.status    = "CLOSED"
     trade.pnl       = pnl
@@ -442,8 +398,7 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
             "market_question": t.market_question,
             "outcome": t.outcome, "direction": t.direction,
             "shares": t.shares, "price_per_share": t.price_per_share,
-            "total_cost": t.total_cost, "status": t.status,
-            "result": "OPEN",
+            "total_cost": t.total_cost, "status": t.status, "result": "OPEN",
             "current_price": cur_price, "current_value": cur_value,
             "unrealized_pnl": unr_pnl, "pnl": unr_pnl,
             "pnl_display": _fmt_pnl(unr_pnl),
@@ -459,9 +414,8 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
             "shares": t.shares, "price_per_share": t.price_per_share,
             "total_cost": t.total_cost, "status": t.status,
             "result": _result_label(t),
-            "current_price": None, "current_value": None,
-            "unrealized_pnl": None, "pnl": t.pnl,
-            "pnl_display": _fmt_pnl(t.pnl),
+            "current_price": None, "current_value": None, "unrealized_pnl": None,
+            "pnl": t.pnl, "pnl_display": _fmt_pnl(t.pnl),
             "tx_hash": t.tx_hash,
             "closed_at": t.closed_at.isoformat() if t.closed_at else None,
             "created_at": t.created_at.isoformat(),
@@ -471,7 +425,6 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
         "wallet_address":        wallet_address,
         "telegram_user_id":      telegram_user_id,
         "trading_mode":          config.trading_mode,
-        "kyc_status":            config.kyc_status,
         "paper_balance":         round(config.paper_balance, 2),
         "real_balance_usdc":     round(config.real_balance_usdc, 2),
         "open_positions_cost":   open_cost,
