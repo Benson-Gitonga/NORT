@@ -1512,3 +1512,20 @@ body::after {
 .market-id-btn.copied .market-id-value {
   color: var(--green);
 }
+
+/* ── Trading Mode ──────────────────────────────────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(1.4); }
+}
+
+/* Show mode pill on mobile (above bottom nav) */
+@media (max-width: 768px) {
+  .mode-pill-mobile { display: flex !important; }
+}
+
+/* Real mode: amber border on trade cards */
+.real-mode .feed-card,
+.real-mode .card {
+  border-color: rgba(245, 158, 11, 0.4) !important;
+}

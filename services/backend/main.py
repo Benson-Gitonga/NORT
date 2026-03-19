@@ -10,6 +10,8 @@ from services.backend.api.trades import router as trades_router
 from services.backend.api.wallet import router as wallet_router
 from services.backend.api.advice import router as advice_router
 from services.backend.api.leaderboard import router as leaderboard_router
+from services.backend.api.fx import router as fx_router          # Phase 1: FX rates
+from services.backend.api.mode import router as mode_router      # Phase 1: mode toggle
 from services.backend.data.database import init_db, engine
 
 # How often to auto-sync markets from Polymarket (in seconds)
@@ -71,19 +73,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers once each — no duplicates
+# ─── ROUTERS ─────────────────────────────────────────────────────────────────
+# Each router is mounted twice: bare (legacy) + /api prefix (current standard).
+
 app.include_router(markets_router)
-app.include_router(markets_router,    prefix="/api")
+app.include_router(markets_router,     prefix="/api")
 app.include_router(signals_router)
-app.include_router(signals_router,    prefix="/api")
+app.include_router(signals_router,     prefix="/api")
 app.include_router(trades_router)
-app.include_router(trades_router,     prefix="/api")
+app.include_router(trades_router,      prefix="/api")
 app.include_router(wallet_router)
-app.include_router(wallet_router,     prefix="/api")
+app.include_router(wallet_router,      prefix="/api")
 app.include_router(advice_router)
-app.include_router(advice_router,     prefix="/api")
+app.include_router(advice_router,      prefix="/api")
 app.include_router(leaderboard_router)
 app.include_router(leaderboard_router, prefix="/api")
+app.include_router(fx_router)          # GET /fx/rates
+app.include_router(fx_router,          prefix="/api")   # GET /api/fx/rates
+app.include_router(mode_router)        # GET|POST /wallet/mode
+app.include_router(mode_router,        prefix="/api")   # GET|POST /api/wallet/mode
 
 
 @app.api_route("/", methods=["GET", "HEAD"])
