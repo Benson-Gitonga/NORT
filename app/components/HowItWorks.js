@@ -137,11 +137,11 @@ function CardTrack() {
    nodeColor: colour of the dot on the spine
 ─────────────────────────────────────────────────────────────── */
 const STEPS = [
-  { num:'01', title:'Find Markets',    desc:'Use the Signals command to instantly discover trending Polymarket opportunities, ranked by real-time price momentum and volume spikes.',         side:'left',  nodeColor:'var(--accent)', Card: CardFindMarkets },
-  { num:'02', title:'Analyze Markets', desc:'Ask NORT Bot for a clear, plain-English breakdown of any prediction market — including key drivers, risks, and sentiment.',                    side:'right', nodeColor:'var(--blue)',   Card: CardAnalyze    },
-  { num:'03', title:'Get Signal',      desc:'Receive a simple recommendation: BUY YES, BUY NO, or WAIT, based on data-backed insights and AI confidence scoring.',                         side:'left',  nodeColor:'var(--blue)',   Card: CardSignal     },
-  { num:'04', title:'Place Trades',    desc:'Execute trades seamlessly without complex setup or external tools — directly through the NORT app or Telegram bot.',                           side:'right', nodeColor:'var(--accent)', Card: CardTrade      },
-  { num:'05', title:'Track Results',   desc:'Monitor your positions and market movements in real time on your dashboard. See your P&L, win rate, and climb the leaderboard.',               side:'left',  nodeColor:'var(--accent)', Card: CardTrack      },
+  { num:'01', title:'Browse Signals',   desc:'The signals engine scans active crypto and sports markets on Polymarket and ranks them by price momentum and volume spikes — surfacing what\'s actually moving right now.',          side:'left',  nodeColor:'var(--accent)', Card: CardFindMarkets },
+  { num:'02', title:'Ask AI for Advice',desc:'Tap any signal to ask OpenClaw for a plain-English breakdown — key drivers, risks, and a suggested position. AI advice is on-demand, not automatic.',                              side:'right', nodeColor:'var(--accent)', Card: CardAnalyze    },
+  { num:'03', title:'Get a Signal',     desc:'See a clear recommendation — BUY YES, BUY NO, or WAIT — along with a confidence score from the signals engine based on momentum and volume data.',                               side:'left',  nodeColor:'var(--accent)', Card: CardSignal     },
+  { num:'04', title:'Place a Trade',    desc:'Place paper trades directly from the dashboard or Telegram bot. No external tools, no complex setup — just pick a market, choose a side, and stake.',                            side:'right', nodeColor:'var(--accent)', Card: CardTrade      },
+  { num:'05', title:'Track Results',    desc:'Follow your open positions in real time. Monitor P&L, win rate, and XP progress on your dashboard — and see how you stack up on the leaderboard.',                              side:'left',  nodeColor:'var(--accent)', Card: CardTrack      },
 ];
 
 export default function HowItWorks() {
@@ -162,12 +162,31 @@ export default function HowItWorks() {
   }, []);
 
   return (
-    <section id="how-it-works" ref={sectionRef} style={{ padding:'96px 0', background:'var(--bg-1)', borderTop:'1px solid var(--border)', borderBottom:'1px solid var(--border)', position:'relative', overflow:'hidden' }}>
+    <section id="how-it-works" ref={sectionRef} style={{ padding:'96px 0', background:'#000', position:'relative', overflow:'hidden' }}>
+
+      {/* Custom gradient background image */}
+      <div style={{
+        position:'absolute', inset:0, zIndex:0,
+        backgroundImage:"url('/images/bg-howitworks.png')",
+        backgroundSize:'cover',
+        backgroundPosition:'center',
+        backgroundRepeat:'no-repeat',
+        opacity:0.85,
+      }} />
+
+      {/* Dot grid on top */}
+      <div style={{
+        position:'absolute', inset:0, zIndex:1, pointerEvents:'none',
+        backgroundImage:'radial-gradient(rgba(255,255,255,0.12) 1px, transparent 1px)',
+        backgroundSize:'28px 28px',
+        maskImage:'radial-gradient(ellipse 90% 90% at 50% 50%, black 30%, transparent 100%)',
+        WebkitMaskImage:'radial-gradient(ellipse 90% 90% at 50% 50%, black 30%, transparent 100%)',
+      }} />
 
       {/* Inset shadows top + bottom */}
-      <div style={{ position:'absolute', inset:0, pointerEvents:'none', boxShadow:'inset 0 20px 40px rgba(0,0,0,0.4), inset 0 -20px 40px rgba(0,0,0,0.4)' }}></div>
+      <div style={{ position:'absolute', inset:0, zIndex:2, pointerEvents:'none', boxShadow:'inset 0 20px 40px rgba(0,0,0,0.4), inset 0 -20px 40px rgba(0,0,0,0.4)' }}></div>
 
-      <div style={{ maxWidth:1152, margin:'0 auto', padding:'0 24px', position:'relative', zIndex:1 }}>
+      <div style={{ maxWidth:1152, margin:'0 auto', padding:'0 24px', position:'relative', zIndex:3 }}>
 
         {/* ── Section header ───────────────────────── */}
         <div className="hw-header" style={{ textAlign:'center', maxWidth:600, margin:'0 auto 72px', opacity:0, transform:'translateY(24px)', transition:'opacity 0.8s ease, transform 0.8s ease' }}>
@@ -176,15 +195,15 @@ export default function HowItWorks() {
             How NORT works
           </h2>
           <p style={{ fontSize:16, color:'var(--text-2)', lineHeight:1.65, fontFamily:'var(--font-body)' }}>
-            NORT makes prediction market trading simple with real-time data and AI insights — helping you spot opportunities, understand risks, and trade confidently.
+            A signals engine ranks the best Polymarket opportunities in real time. Ask AI for advice on any of them. Then trade — right from the app or Telegram.
           </p>
         </div>
 
         {/* ── Pipeline shell ───────────────────────── */}
         <div style={{ position:'relative', maxWidth:900, margin:'0 auto' }}>
 
-          {/* Vertical spine tube */}
-          <div style={{ position:'absolute', left:'50%', top:0, bottom:0, width:18, transform:'translateX(-50%)', borderRadius:999, background:'linear-gradient(to bottom, rgba(255,255,255,0.02), rgba(255,255,255,0.01))', border:'1px solid rgba(63,63,70,0.75)', boxShadow:'inset 0 1px 0 rgba(255,255,255,0.03), inset 0 0 24px rgba(0,0,0,0.5)', zIndex:0 }}>
+          {/* Vertical spine tube — no border, just the inner track */}
+          <div style={{ position:'absolute', left:'50%', top:0, bottom:0, width:18, transform:'translateX(-50%)', borderRadius:999, zIndex:0 }}>
 
             {/* Inner track + animated beam */}
             <div style={{ position:'absolute', left:'50%', top:16, bottom:16, width:2, transform:'translateX(-50%)', borderRadius:999, background:'rgba(63,63,70,0.95)', overflow:'hidden' }}>
@@ -225,8 +244,8 @@ export default function HowItWorks() {
                 {/* Spine node — sits on the centre line */}
                 <div className="hw-step-node" style={{ position:'absolute', left:'50%', top:'50%', width:36, height:36, transform:'translate(-50%,-50%)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:20, opacity:0, transition:'opacity 0.7s ease 0.18s' }}>
                   <div style={{ position:'relative', width:'100%', height:'100%', borderRadius:'50%', border:`1px solid rgba(63,63,70,0.8)`, background:`radial-gradient(circle, var(--bg-2), var(--bg))`, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 6px 20px rgba(0,0,0,0.4)' }}>
-                    {/* Pulsing ring */}
-                    <div style={{ position:'absolute', inset:-8, borderRadius:'50%', border:`1px solid ${step.nodeColor}`, opacity:0.25, animation:'hw-node-pulse 2.2s ease-out infinite' }}></div>
+                    {/* Static ring — no pulse */}
+                    <div style={{ position:'absolute', inset:-8, borderRadius:'50%', border:`1px solid ${step.nodeColor}`, opacity:0.25 }}></div>
                     {/* Coloured dot */}
                     <div style={{ width:10, height:10, borderRadius:'50%', background:step.nodeColor, boxShadow:`0 0 12px ${step.nodeColor}` }}></div>
                   </div>

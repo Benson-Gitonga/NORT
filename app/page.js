@@ -37,7 +37,7 @@ export default function Home() {
       {/* Fixed pill navbar — always visible at the top */}
       <Navbar />
 
-      <main>
+      <main id="main-content">
         {/* 1. Hero: full-screen intro, dashboard preview, live ticker */}
         <Hero />
 

@@ -171,12 +171,30 @@ export default function NortBot() {
 
   return (
     /* ── Section wrapper ───────────────────────────── */
-    <section id="nort-bot" style={{ padding: '96px 0', background: '#09090b', borderTop: '1px solid rgba(255,255,255,0.06)', position: 'relative', overflow: 'visible' }}>
+    <section id="nort-bot" style={{ padding: '96px 0', background: '#000', position: 'relative', overflow: 'visible' }}>
 
-      {/* Ambient glow behind the section */}
-      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 600, height: 400, background: 'radial-gradient(ellipse, rgba(0,200,150,0.05) 0%, transparent 70%)', pointerEvents: 'none' }} />
+      {/* Custom gradient background image */}
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 0,
+        backgroundImage: "url('/images/bg-nortbot.png')",
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        opacity: 0.85,
+      }} />
 
-      <div style={{ maxWidth: 1152, margin: '0 auto', padding: '0 24px', position: 'relative', zIndex: 1 }}>
+      {/* Dot grid on top */}
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none',
+        backgroundImage: 'radial-gradient(rgba(255,255,255,0.12) 1px, transparent 1px)',
+        backgroundSize: '28px 28px',
+        maskImage: 'radial-gradient(ellipse 90% 90% at 50% 50%, black 30%, transparent 100%)',
+        WebkitMaskImage: 'radial-gradient(ellipse 90% 90% at 50% 50%, black 30%, transparent 100%)',
+      }} />
+
+      
+
+      <div style={{ maxWidth: 1152, margin: '0 auto', padding: '0 24px', position: 'relative', zIndex: 2 }}>
 
         {/* ── Section header ───────────────────────── */}
         <div className="fade-up" style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto 56px' }}>

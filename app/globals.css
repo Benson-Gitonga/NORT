@@ -43,9 +43,9 @@
  * ─────────────────────────────────────────────────────────── */
 :root {
   --bg: #000000;
-  --bg-1: #0D1428;
-  --bg-2: #080B14;
-  --bg-3: #0A1A3A;
+  --bg-1: #050507;
+  --bg-2: #080810;
+  --bg-3: #0a0a14;
   --surface: rgba(255,255,255,0.04);
   --surface-hover: rgba(255,255,255,0.07);
   --border: rgba(255,255,255,0.08);
@@ -83,6 +83,14 @@ body {
   color: var(--text-2);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Global keyboard focus styles — visible ring for all focusable elements.
+   Uses :focus-visible so mouse clicks don't show the ring, only keyboard. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
 /* ── 3. NOISE TEXTURE OVERLAY ──────────────────────────────────
@@ -229,14 +237,22 @@ h1,h2,h3,h4 { font-family: var(--font-display); color: var(--text); letter-spaci
  * .icon-wrap: 44×44px icon container with dark background + bright border.
  * hover: lifts 4px + deep drop shadow for a floating card effect.          */
 .feature-card {
-  background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: 16px; padding: 28px;
-  transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px; padding: 28px;
   position: relative; overflow: hidden;
+  transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s, background 0.3s;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 20px 40px rgba(0,0,0,0.25);
 }
-.feature-card:hover {
-  border-color: var(--border-bright); transform: translateY(-4px);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+/* Pure CSS hover — works for both mouse and :focus-within (keyboard) */
+.feature-card:hover,
+.feature-card:focus-within {
+  transform: translateY(-4px);
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.15);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 28px 56px rgba(0,0,0,0.35);
 }
 .feature-card .icon-wrap {
   width: 44px; height: 44px; border-radius: 10px;
@@ -278,7 +294,6 @@ h1,h2,h3,h4 { font-family: var(--font-display); color: var(--text); letter-spaci
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   background: rgba(8,11,20,0.9);
-  border-bottom: 1px solid var(--border);
 }
 .nav-logo {
   display: flex; align-items: center; gap: 8px;
@@ -337,6 +352,12 @@ h1,h2,h3,h4 { font-family: var(--font-display); color: var(--text); letter-spaci
  * ─────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .hidden-mobile { display: none !important; }
+  /* Show hamburger on mobile */
+  .hidden-desktop { display: flex !important; }
+}
+@media (min-width: 769px) {
+  /* Hide hamburger on desktop */
+  .hidden-desktop { display: none !important; }
 }
 @media (max-width: 640px) {
   .signal-card.md-only { display: none; }

@@ -39,6 +39,7 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+import { useEffect, useState } from 'react';
 import LiquidEther from './LiquidEther';
 
 /* ─────────────────────────────────────────────────────────────
@@ -85,6 +86,17 @@ const TICKER_ITEMS = [
    to clip the LiquidEther blobs that extend beyond the viewport.
    ───────────────────────────────────────────────────────────── */
 export default function Hero() {
+  // Respect prefers-reduced-motion — swap animated WebGL blob for a
+  // static CSS gradient so users with vestibular disorders aren't affected.
+  const [reducedMotion, setReducedMotion] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setReducedMotion(mq.matches);
+    const handler = (e) => setReducedMotion(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   return (
     <section style={{
       position: 'relative', minHeight: '100vh',
@@ -125,24 +137,35 @@ export default function Hero() {
        * autoDemo keeps it animated without user interaction.
        * mouseForce=25: strong response to cursor movement.
        */}
+      {/* LAYER 1 — animated background.
+          Full motion: LiquidEther WebGL fluid sim.
+          Reduced motion: static teal→blue radial gradient — same palette,
+          zero animation, respects vestibular/motion sensitivity. */}
       <div style={{ position:'absolute', inset:0, zIndex:1 }}>
-        <LiquidEther
-          colors={['#0be59c','#1A7FE8','#71f4bb' ]}
-          mouseForce={25}
-          cursorSize={120}
-          isViscous={false}
-          viscous={40}
-          iterationsViscous={24}
-          iterationsPoisson={16}
-          resolution={0.35}
-          isBounce={false}
-          autoDemo
-          autoSpeed={0.4}
-          autoIntensity={2.5}
-          takeoverDuration={0.25}
-          autoResumeDelay={2000}
-          autoRampDuration={0.8}
-        />
+        {reducedMotion ? (
+          <div style={{
+            width: '100%', height: '100%',
+            background: 'radial-gradient(ellipse 70% 60% at 20% 30%, rgba(0,200,150,0.18) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 80% 70%, rgba(26,127,232,0.18) 0%, transparent 60%)',
+          }} />
+        ) : (
+          <LiquidEther
+            colors={['#1A7FE8','#1A7FE8','#37f1ce']}
+            mouseForce={25}
+            cursorSize={120}
+            isViscous={false}
+            viscous={40}
+            iterationsViscous={24}
+            iterationsPoisson={16}
+            resolution={0.35}
+            isBounce={false}
+            autoDemo
+            autoSpeed={0.4}
+            autoIntensity={2.5}
+            takeoverDuration={0.25}
+            autoResumeDelay={0}
+            autoRampDuration={0.3}
+          />
+        )}
       </div>
 
       {/*
@@ -215,12 +238,6 @@ export default function Hero() {
               fontSize: 13, fontFamily: 'var(--font-body)',
               color: 'var(--text-3)', letterSpacing: '0.06em',
             }}>
-              {/* Pulsing live dot — blink keyframe: opacity 1 → 0.3 → 1 */}
-              <span style={{
-                width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-                background: 'var(--accent)', boxShadow: '0 0 8px var(--accent)',
-                animation: 'blink 2s ease-in-out infinite',
-              }} />
               Welcome to
             </span>
           </div>
@@ -233,12 +250,23 @@ export default function Hero() {
            *   120px maximum on large screens
            * lineHeight 0.9 — tighter than default for display type
            */}
+          {/* H1 includes keywords for SEO — visually "NORT" dominates,
+              the subtitle line below it carries the keyword context
+              for crawlers without disrupting the visual design. */}
           <h1 style={{
             fontFamily: 'var(--font-display)', fontWeight: 800,
             fontSize: 'clamp(64px, 12vw, 120px)',
             lineHeight: 0.9, letterSpacing: '-0.04em',
-            color: 'var(--text)', marginBottom: 24,
+            color: 'var(--text)', marginBottom: 16,
           }}>NORT</h1>
+          <p style={{
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            fontSize: 'clamp(13px, 1.5vw, 16px)',
+            color: 'var(--accent)', letterSpacing: '0.12em',
+            textTransform: 'uppercase', marginBottom: 24,
+          }}>
+            Polymarket Trading Made Easy
+          </p>
 
           {/* SUBHEADING — value proposition */}
           <p style={{
@@ -246,8 +274,7 @@ export default function Hero() {
             color: 'var(--text-2)', lineHeight: 1.65,
             maxWidth: 520, margin: '0 auto 36px',
           }}>
-            No complex dashboards. Just real-time AI signals, heat scoring, and
-            plain-English analysis — delivered before the crowd knows.
+            NORT ranks the best Polymarket opportunities in real time — then lets you ask AI for a plain-English breakdown before you trade. Whether you're just starting out or already trading, NORT gives you the edge.
           </p>
 
           {/*
@@ -276,7 +303,7 @@ export default function Hero() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             gap: 'clamp(20px,4vw,48px)', marginBottom: 0,
           }}>
-            {[['2.4K+','Traders'],['31','Live Signals'],['94%','Accuracy']].map(([v,l],i) => (
+            {[['2.4K+','Beta Signups'],['31','Live Signals'],['Free','To Start']].map(([v,l],i) => (
               <div key={l} style={{ display:'flex', alignItems:'center', gap: 'clamp(20px,4vw,48px)' }}>
                 {/* Thin vertical divider between stats */}
                 {i > 0 && <div style={{ width:1, height:32, background:'var(--border)' }} />}
@@ -309,21 +336,31 @@ export default function Hero() {
        *
        * hover pauses the animation (ticker-track:hover in CSS).
        */}
-      <div style={{
-        position:'absolute', bottom:0, left:0, right:0, zIndex:10,
-        borderTop:'1px solid var(--border)', background:'rgba(5,8,18,0.88)',
-        backdropFilter:'blur(12px)', padding:'9px 0', overflow:'hidden',
-      }}>
+      <div
+        role="marquee"
+        aria-label="Live market signals"
+        style={{
+          position:'absolute', bottom:0, left:0, right:0, zIndex:10,
+          borderTop:'1px solid var(--border)', background:'rgba(5,8,18,0.88)',
+          backdropFilter:'blur(12px)', padding:'9px 0', overflow:'hidden',
+        }}
+      >
         <div className="ticker-track" style={{ display:'flex', gap:48, width:'max-content' }}>
-          {[...TICKER_ITEMS,...TICKER_ITEMS].map((item,i) => (
+          {/* First set — readable by screen readers */}
+          {TICKER_ITEMS.map((item,i) => (
             <div key={i} style={{ display:'flex', alignItems:'center', gap:8, whiteSpace:'nowrap' }}>
-              {/* Accent dot separator */}
-              <span style={{ width:5, height:5, borderRadius:'50%', background:'var(--accent)', flexShrink:0, display:'inline-block' }}/>
-              {/* Market label */}
+              <span aria-hidden="true" style={{ width:5, height:5, borderRadius:'50%', background:'var(--accent)', flexShrink:0, display:'inline-block' }}/>
               <span style={{ fontSize:11, fontFamily:'var(--font-display)', color:'var(--text-2)', fontWeight:500 }}>{item.label}</span>
-              {/* Side + percentage in accent colour */}
               <span style={{ fontSize:11, fontFamily:'var(--font-display)', color:'var(--accent)', fontWeight:700 }}>{item.side} {item.pct}</span>
-              {/* Heat label in muted colour */}
+              <span style={{ fontSize:10, color:'var(--text-3)', fontFamily:'var(--font-display)' }}>{item.heat}</span>
+            </div>
+          ))}
+          {/* Duplicate set — hidden from screen readers, visual loop only */}
+          {TICKER_ITEMS.map((item,i) => (
+            <div key={`dup-${i}`} aria-hidden="true" style={{ display:'flex', alignItems:'center', gap:8, whiteSpace:'nowrap' }}>
+              <span style={{ width:5, height:5, borderRadius:'50%', background:'var(--accent)', flexShrink:0, display:'inline-block' }}/>
+              <span style={{ fontSize:11, fontFamily:'var(--font-display)', color:'var(--text-2)', fontWeight:500 }}>{item.label}</span>
+              <span style={{ fontSize:11, fontFamily:'var(--font-display)', color:'var(--accent)', fontWeight:700 }}>{item.side} {item.pct}</span>
               <span style={{ fontSize:10, color:'var(--text-3)', fontFamily:'var(--font-display)' }}>{item.heat}</span>
             </div>
           ))}

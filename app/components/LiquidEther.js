@@ -725,9 +725,9 @@ export default function LiquidEther({
         this._loop = this.loop.bind(this);
         this._resize = this.resize.bind(this);
         window.addEventListener('resize', this._resize);
+        /* Keep running even when tab is hidden */
         this._onVisibility = () => {
-          if (document.hidden) { this.pause(); }
-          else if (isVisibleRef.current) { this.start(); }
+          if (!document.hidden && isVisibleRef.current) webglRef.current?.start();
         };
         document.addEventListener('visibilitychange', this._onVisibility);
         this.running = false;
@@ -782,13 +782,13 @@ export default function LiquidEther({
 
     webgl.start();
 
-    /* Pause RAF when hero section is scrolled out of view */
+    /* Always keep running — never pause when scrolled off screen */
     const io = new IntersectionObserver(entries => {
       const isVisible = entries[0].isIntersecting && entries[0].intersectionRatio > 0;
       isVisibleRef.current = isVisible;
       if (!webglRef.current) return;
-      if (isVisible && !document.hidden) webglRef.current.start();
-      else webglRef.current.pause();
+      /* Always start — ignore visibility so animation never stops */
+      if (!document.hidden) webglRef.current.start();
     }, { threshold: [0, 0.01, 0.1] });
     io.observe(container);
     intersectionObserverRef.current = io;
