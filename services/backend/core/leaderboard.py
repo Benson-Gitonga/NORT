@@ -1,23 +1,23 @@
 """
 Leaderboard + Achievements + User Stats core logic for NORT.
 
+Supports two modes:
+  mode='paper'  → reads PaperTrade + paper_balance (original behaviour)
+  mode='real'   → reads RealTrade  + real_balance_usdc
+
 Feeds:
-  GET /leaderboard           → full ranked board
-  GET /leaderboard/me        → personal rank card
-  GET /user/stats            → XP, level, streak, rank (achievements page header)
-  GET /user/achievements     → earned / locked achievement list
+  GET /leaderboard?mode=paper|real
+  GET /leaderboard/me?mode=paper|real
+  GET /user/stats
+  GET /user/achievements
 """
 
 from typing import List, Optional
 from sqlmodel import Session, select
-from services.backend.data.models import WalletConfig, PaperTrade, User
+from services.backend.data.models import WalletConfig, PaperTrade, RealTrade, User
 
 
-# ─────────────────────────────────────────────
-# ACHIEVEMENT DEFINITIONS
-# Single source of truth — both backend and the
-# frontend achievements page read from this.
-# ─────────────────────────────────────────────
+# ─── ACHIEVEMENT DEFINITIONS ─────────────────────────────────────────────────
 
 ACHIEVEMENT_DEFS = [
     {"id": "first",   "icon": "🎯", "name": "First Trade",    "desc": "Complete your first paper trade",        "xp": 50},
@@ -33,12 +33,9 @@ ACHIEVEMENT_DEFS = [
 ]
 
 
-# ─────────────────────────────────────────────
-# BADGE SYSTEM
-# ─────────────────────────────────────────────
+# ─── BADGE + XP + STREAK ─────────────────────────────────────────────────────
 
 def compute_badge(total_trades: int, win_rate: float, net_pnl: float) -> dict:
-    """Return the highest earned badge for this user."""
     if net_pnl >= 500 and win_rate >= 70 and total_trades >= 20:
         return {"id": "oracle",  "label": "Oracle", "emoji": "🔮", "color": "#7c3aed"}
     if net_pnl >= 250 and win_rate >= 60 and total_trades >= 10:
@@ -50,12 +47,7 @@ def compute_badge(total_trades: int, win_rate: float, net_pnl: float) -> dict:
     return     {"id": "rookie",  "label": "Rookie", "emoji": "🌱", "color": "#a0a0a0"}
 
 
-# ─────────────────────────────────────────────
-# XP FORMULA
-# ─────────────────────────────────────────────
-
 def compute_xp(total_trades: int, win_rate: float, net_pnl: float) -> int:
-    """XP = 10 per trade + win-rate bonus + profit bonus."""
     xp = total_trades * 10
     if win_rate >= 50:
         xp += int((win_rate - 50) * 4)
@@ -64,14 +56,9 @@ def compute_xp(total_trades: int, win_rate: float, net_pnl: float) -> int:
     return max(0, xp)
 
 
-# ─────────────────────────────────────────────
-# STREAK
-# ─────────────────────────────────────────────
-
 def compute_streak(trades: list) -> int:
-    """Count current consecutive winning closed trades (most recent first)."""
     closed = sorted(
-        [t for t in trades if t.status == "CLOSED" and t.pnl is not None],
+        [t for t in trades if getattr(t, 'status', '') == "CLOSED" and t.pnl is not None],
         key=lambda t: t.closed_at or t.created_at,
         reverse=True,
     )
@@ -84,31 +71,17 @@ def compute_streak(trades: list) -> int:
     return streak
 
 
-# ─────────────────────────────────────────────
-# ACHIEVEMENTS CHECK
-# ─────────────────────────────────────────────
+# ─── ACHIEVEMENTS ────────────────────────────────────────────────────────────
 
-def check_achievements(
-    trades: list,
-    net_pnl: float,
-    has_used_premium: bool = False,
-) -> List[dict]:
-    """
-    Given a user's trade list, return all achievement defs annotated
-    with earned: True/False and isNew: False.
-    Frontend drives the 'isNew' animation — backend just reports earned state.
-    """
+def check_achievements(trades: list, net_pnl: float, has_used_premium: bool = False) -> List[dict]:
     total_trades   = len(trades)
-    closed_trades  = [t for t in trades if t.status == "CLOSED"]
+    closed_trades  = [t for t in trades if getattr(t, 'status', '') == "CLOSED"]
     winning_trades = [t for t in closed_trades if (t.pnl or 0) > 0]
     streak         = compute_streak(trades)
-
-    # Contrarian: won a trade where odds at time were low (price_per_share < 0.30)
     contrarian_wins = [
         t for t in winning_trades
-        if (t.price_per_share or 1) < 0.30
+        if (getattr(t, 'price_per_share', 1) or 1) < 0.30
     ]
-
     earned_map = {
         "first":   total_trades >= 1,
         "bullish": len(winning_trades) >= 1,
@@ -121,36 +94,24 @@ def check_achievements(
         "degen":   streak >= 10,
         "whale":   total_trades >= 50,
     }
-
     return [
         {**defn, "earned": earned_map.get(defn["id"], False), "isNew": False}
         for defn in ACHIEVEMENT_DEFS
     ]
 
 
-# ─────────────────────────────────────────────
-# SHARED — load a user's raw data
-# ─────────────────────────────────────────────
+# ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 def _load_user_data(tid: str, session: Session):
-    """Return (config, trades, user) for a telegram_user_id."""
     config = session.exec(
         select(WalletConfig).where(WalletConfig.telegram_user_id == tid)
     ).first()
-
     trades = session.exec(
         select(PaperTrade).where(PaperTrade.telegram_user_id == tid)
     ).all()
-
-    # Try to find user by telegram_id or wallet_address
-    user = session.exec(
-        select(User).where(User.telegram_id == tid)
-    ).first()
+    user = session.exec(select(User).where(User.telegram_id == tid)).first()
     if not user:
-        user = session.exec(
-            select(User).where(User.wallet_address == tid.lower())
-        ).first()
-
+        user = session.exec(select(User).where(User.wallet_address == tid.lower())).first()
     return config, list(trades), user
 
 
@@ -163,44 +124,36 @@ def _display_name(user: Optional[User], tid: str) -> str:
     return f"Trader {tid[:6]}"
 
 
-# ─────────────────────────────────────────────
-# LEADERBOARD
-# ─────────────────────────────────────────────
+def _build_user_index(session: Session) -> dict:
+    all_users = session.exec(select(User)).all()
+    idx = {}
+    for u in all_users:
+        if u.telegram_id:       idx[u.telegram_id] = u
+        if u.wallet_address:    idx[u.wallet_address] = u
+        if u.wallet_address:    idx[u.wallet_address.lower()] = u
+    return idx
 
-def get_leaderboard(session: Session, limit: int = 50) -> List[dict]:
-    """
-    Build ranked leaderboard from all WalletConfig + PaperTrade records.
-    Only users who have placed at least 1 trade appear on the board.
-    Sorted by portfolio_value desc, then net_pnl desc.
-    """
+
+# ─── PAPER LEADERBOARD ───────────────────────────────────────────────────────
+
+def _paper_leaderboard(session: Session, limit: int) -> List[dict]:
+    """Leaderboard ranked by paper portfolio value. Original behaviour."""
     configs    = session.exec(select(WalletConfig)).all()
     all_trades = session.exec(select(PaperTrade)).all()
-    all_users  = session.exec(select(User)).all()
+    user_idx   = _build_user_index(session)
 
     trades_by_user: dict = {}
     for t in all_trades:
         trades_by_user.setdefault(t.telegram_user_id, []).append(t)
 
-    # Build lookup by every possible key variant so display names always resolve
-    user_by_tid: dict = {}
-    for u in all_users:
-        if u.telegram_id:
-            user_by_tid[u.telegram_id] = u
-        if u.wallet_address:
-            user_by_tid[u.wallet_address] = u
-            user_by_tid[u.wallet_address.lower()] = u
-
     rows = []
     for config in configs:
         tid    = config.telegram_user_id
         trades = trades_by_user.get(tid, [])
-
-        # ── Only include users who have actually traded ──
-        if len(trades) == 0:
+        if not trades:
             continue
 
-        user = user_by_tid.get(tid)
-
+        user          = user_idx.get(tid)
         open_trades   = [t for t in trades if t.status == "OPEN"]
         closed_trades = [t for t in trades if t.status == "CLOSED"]
         winning       = [t for t in closed_trades if (t.pnl or 0) > 0]
@@ -211,8 +164,6 @@ def get_leaderboard(session: Session, limit: int = 50) -> List[dict]:
         total_trades    = len(trades)
         win_rate        = round(len(winning) / len(closed_trades) * 100, 1) if closed_trades else 0.0
         streak          = compute_streak(trades)
-        badge           = compute_badge(total_trades, win_rate, net_pnl)
-        xp              = compute_xp(total_trades, win_rate, net_pnl)
 
         rows.append({
             "telegram_user_id": tid,
@@ -226,35 +177,96 @@ def get_leaderboard(session: Session, limit: int = 50) -> List[dict]:
             "closed_trades":    len(closed_trades),
             "win_rate":         win_rate,
             "streak":           streak,
-            "badge":            badge,
-            "xp":               xp,
+            "badge":            compute_badge(total_trades, win_rate, net_pnl),
+            "xp":               compute_xp(total_trades, win_rate, net_pnl),
+            "mode":             "paper",
         })
 
     rows.sort(key=lambda r: (r["portfolio_value"], r["net_pnl"]), reverse=True)
     for i, row in enumerate(rows[:limit]):
         row["rank"] = i + 1
-
     return rows[:limit]
 
 
-def get_user_rank(telegram_user_id: str, session: Session) -> Optional[dict]:
-    """Get a single user's full leaderboard entry including their rank."""
-    board = get_leaderboard(session, limit=10_000)
+# ─── REAL LEADERBOARD ────────────────────────────────────────────────────────
+
+def _real_leaderboard(session: Session, limit: int) -> List[dict]:
+    """
+    Leaderboard for real trading mode.
+    Ranked by real_balance_usdc + closed RealTrade P&L.
+    Only users who have placed at least 1 real trade appear.
+    """
+    configs    = session.exec(select(WalletConfig)).all()
+    all_trades = session.exec(select(RealTrade)).all()
+    user_idx   = _build_user_index(session)
+
+    trades_by_user: dict = {}
+    for t in all_trades:
+        trades_by_user.setdefault(t.telegram_user_id, []).append(t)
+
+    # Initial deposit assumed to be 1000 USDC (same as paper)
+    INITIAL_DEPOSIT = 1000.0
+
+    rows = []
+    for config in configs:
+        tid    = config.telegram_user_id
+        trades = trades_by_user.get(tid, [])
+        if not trades:
+            continue
+
+        user          = user_idx.get(tid)
+        closed_trades = [t for t in trades if t.status == "closed"]
+        open_trades   = [t for t in trades if t.status in ("open", "pending_bridge", "bridging", "pending_execution")]
+        winning       = [t for t in closed_trades if (t.pnl or 0) > 0]
+
+        # Portfolio = current on-chain balance + open position costs
+        open_cost       = sum(t.total_cost_usdc for t in open_trades)
+        portfolio_value = round(config.real_balance_usdc + open_cost, 2)
+        net_pnl         = round(portfolio_value - INITIAL_DEPOSIT, 2)
+        total_trades    = len(trades)
+        win_rate        = round(len(winning) / len(closed_trades) * 100, 1) if closed_trades else 0.0
+        streak          = compute_streak(closed_trades)
+
+        rows.append({
+            "telegram_user_id": tid,
+            "display_name":     _display_name(user, tid),
+            "portfolio_value":  portfolio_value,
+            "net_pnl":          net_pnl,
+            "net_pnl_pct":      round((net_pnl / INITIAL_DEPOSIT) * 100, 2),
+            "real_balance_usdc": round(config.real_balance_usdc, 2),
+            "total_trades":     total_trades,
+            "open_trades":      len(open_trades),
+            "closed_trades":    len(closed_trades),
+            "win_rate":         win_rate,
+            "streak":           streak,
+            "badge":            compute_badge(total_trades, win_rate, net_pnl),
+            "xp":               compute_xp(total_trades, win_rate, net_pnl),
+            "mode":             "real",
+        })
+
+    rows.sort(key=lambda r: (r["portfolio_value"], r["net_pnl"]), reverse=True)
+    for i, row in enumerate(rows[:limit]):
+        row["rank"] = i + 1
+    return rows[:limit]
+
+
+# ─── PUBLIC API ──────────────────────────────────────────────────────────────
+
+def get_leaderboard(session: Session, limit: int = 50, mode: str = "paper") -> List[dict]:
+    if mode == "real":
+        return _real_leaderboard(session, limit)
+    return _paper_leaderboard(session, limit)
+
+
+def get_user_rank(telegram_user_id: str, session: Session, mode: str = "paper") -> Optional[dict]:
+    board = get_leaderboard(session, limit=10_000, mode=mode)
     for entry in board:
         if entry["telegram_user_id"] == str(telegram_user_id):
             return entry
     return None
 
 
-# ─────────────────────────────────────────────
-# USER STATS (achievements page header)
-# ─────────────────────────────────────────────
-
 def get_user_stats(tid: str, session: Session) -> dict:
-    """
-    Return XP, level, rank, streak, xpToNextLevel, xpProgress for
-    the achievements page ring + header.
-    """
     config, trades, user = _load_user_data(tid, session)
     if not config:
         return {
@@ -262,49 +274,35 @@ def get_user_stats(tid: str, session: Session) -> dict:
             "xpToNextLevel": 500, "xpProgress": 0,
             "totalTrades": 0, "winRate": 0,
         }
-
     closed_trades  = [t for t in trades if t.status == "CLOSED"]
     winning_trades = [t for t in closed_trades if (t.pnl or 0) > 0]
     open_cost      = sum(t.total_cost for t in trades if t.status == "OPEN")
     portfolio_value = round(config.paper_balance + open_cost, 2)
     net_pnl         = round(portfolio_value - config.total_deposited, 2)
-
     win_rate   = round(len(winning_trades) / len(closed_trades) * 100, 1) if closed_trades else 0.0
     streak     = compute_streak(trades)
     xp         = compute_xp(len(trades), win_rate, net_pnl)
     level      = (xp // 500) + 1
     xp_in_lvl  = xp % 500
-    xp_needed  = 500 - xp_in_lvl
-
-    # Rank: need the full board
-    board = get_leaderboard(session, limit=10_000)
+    board = get_leaderboard(session, limit=10_000, mode="paper")
     rank  = next((e["rank"] for e in board if e["telegram_user_id"] == tid), None)
-
     return {
         "xp":            xp,
         "level":         level,
         "rank":          rank,
         "streak":        streak,
-        "xpToNextLevel": xp_needed,
+        "xpToNextLevel": 500 - xp_in_lvl,
         "xpProgress":    round((xp_in_lvl / 500) * 100, 1),
         "totalTrades":   len(trades),
         "winRate":       win_rate,
     }
 
 
-# ─────────────────────────────────────────────
-# ACHIEVEMENTS (per-user)
-# ─────────────────────────────────────────────
-
 def get_achievements(tid: str, session: Session) -> List[dict]:
-    """Return all achievements annotated with earned state for this user."""
     config, trades, _ = _load_user_data(tid, session)
     if not config:
         return [dict(a, earned=False, isNew=False) for a in ACHIEVEMENT_DEFS]
-
-    closed_trades = [t for t in trades if t.status == "CLOSED"]
-    open_cost     = sum(t.total_cost for t in trades if t.status == "OPEN")
+    open_cost       = sum(t.total_cost for t in trades if t.status == "OPEN")
     portfolio_value = round(config.paper_balance + open_cost, 2)
     net_pnl         = round(portfolio_value - config.total_deposited, 2)
-
     return check_achievements(trades=trades, net_pnl=net_pnl)

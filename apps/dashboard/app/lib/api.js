@@ -310,18 +310,17 @@ export async function sellTrade(tradeId) {
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
 
-export async function getLeaderboard(limit = 50) {
-  const res = await fetch(`${BASE}/api/leaderboard?limit=${limit}`);
+export async function getLeaderboard(limit = 50, mode = 'paper') {
+  const res = await fetch(`${BASE}/api/leaderboard?limit=${limit}&mode=${mode}`);
   if (!res.ok) throw new Error(`Leaderboard fetch failed: ${res.status}`);
   const data = await res.json();
   return data.leaderboard || [];
 }
 
-export async function getMyRank(walletAddress) {
+export async function getMyRank(walletAddress, mode = 'paper') {
   if (!walletAddress) return null;
-  // Always send lowercase — the DB stores wallet addresses lowercased
   const addr = walletAddress.toLowerCase();
-  const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(addr)}`);
+  const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(addr)}&mode=${mode}`);
   // 404 = user hasn't traded yet — not an error, just no rank card yet
   if (res.status === 404) return null;
   if (!res.ok) return null;
