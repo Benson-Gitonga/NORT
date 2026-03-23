@@ -251,16 +251,26 @@ export async function paperTrade({ marketId, side, amount, price, question: prov
 
 export async function getWallet() {
   const wallet = getStoredWallet();
-  if (!wallet) return { balance: 0, pnl: 0, pnlPct: 0, trades: 0 };
+  if (!wallet) return { balance: 0, pnl: 0, pnlPct: 0, trades: 0, wins: 0, losses: 0, winRate: 0, tradingMode: 'paper' };
 
   const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
   if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`);
   const w = await res.json();
+
+  // Use the right balance based on mode
+  const isReal = w.trading_mode === 'real';
   return {
-    balance: w.paper_balance       ?? 0,
-    pnl:     w.net_pnl             ?? 0,
-    pnlPct:  w.net_pnl_pct         ?? 0,
-    trades:  w.total_trades        ?? 0,
+    balance:     (isReal ? w.real_balance_usdc : w.paper_balance) ?? 0,
+    pnl:         w.net_pnl             ?? 0,
+    pnlPct:      w.net_pnl_pct         ?? 0,
+    trades:      w.total_trades        ?? 0,
+    wins:        w.wins                ?? 0,
+    losses:      w.losses              ?? 0,
+    winRate:     w.win_rate_pct        ?? 0,
+    tradingMode: w.trading_mode        ?? 'paper',
+    // keep both balances available
+    paperBalance:    w.paper_balance    ?? 0,
+    realBalanceUsdc: w.real_balance_usdc ?? 0,
   };
 }
 
