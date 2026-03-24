@@ -3,6 +3,7 @@ import httpx
 import os
 import asyncio
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from tavily import TavilyClient
@@ -12,6 +13,7 @@ from sqlmodel import Session, select
 load_dotenv()
 
 from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
+from services.backend.core.x402_verifier import has_premium_access, payment_required_payload
 from services.backend.data.database import engine
 from services.backend.data.models import Market, AISignal
 
@@ -319,6 +321,12 @@ def fetch_market_signal(market_id: str) -> dict:
 @router.post("/advice", response_model=AdviceResponse)
 async def get_advice(request: AdviceRequest):
     tool_calls_used: list[str] = []
+
+    if request.premium and not has_premium_access(request.telegram_id, request.market_id):
+        return JSONResponse(
+            status_code=402,
+            content=payment_required_payload(request.market_id),
+        )
 
     # 1. Fetch directly from Neon — no localhost calls
     market_data   = fetch_market_data(request.market_id)

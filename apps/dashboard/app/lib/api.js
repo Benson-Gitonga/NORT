@@ -132,8 +132,7 @@ export async function getAdvice(marketId) {
   };
 }
 
-export async function getPremiumAdvice(marketId, paymentProof) {
-  if (!paymentProof) throw new Error('PAYMENT_REQUIRED');
+export async function getPremiumAdvice(marketId) {
   const wallet = getStoredWallet();
   const res = await fetch(`${BASE}/agent/advice`, {
     method: 'POST',
@@ -144,6 +143,7 @@ export async function getPremiumAdvice(marketId, paymentProof) {
       premium: true,
     }),
   });
+  if (res.status === 402) throw new Error('PAYMENT_REQUIRED');
   if (!res.ok) throw new Error(`Premium advice fetch failed: ${res.status}`);
   const data = await res.json();
   return {
@@ -156,7 +156,7 @@ export async function getPremiumAdvice(marketId, paymentProof) {
   };
 }
 
-export async function verifyPayment(proof) {
+async function verifyPaymentMock(proof) {
   if (!proof || proof.length < 4) return { valid: false, error: 'Invalid proof' };
   // x402 verification — proof is accepted if it meets minimum length
   return { valid: true, receipt: `receipt_${Date.now()}` };
@@ -421,4 +421,28 @@ export async function getFullWallet() {
     // keep legacy shape too
     balance:         w.paper_balance       ?? 0,
   };
+}
+
+export async function verifyPayment(proof, marketId) {
+  const wallet = getStoredWallet();
+  if (!proof || proof.length < 4) return { valid: false, error: 'Invalid proof' };
+  if (!marketId) return { valid: false, error: 'Missing market id' };
+  if (!wallet) return { valid: false, error: 'No wallet connected' };
+
+  const res = await fetch(`${BASE}/x402/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proof,
+      wallet_address: wallet,
+      market_id: String(marketId),
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.verified) {
+    return { valid: false, error: data.reason || data.detail || 'Verification failed' };
+  }
+
+  return { valid: true, receipt: data.tx_hash || proof, details: data };
 }
