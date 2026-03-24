@@ -1,9 +1,11 @@
 'use client';
 import React from 'react';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getSignals } from '@/lib/api';
 import { useTelegram } from '@/hooks/useTelegram';
+import { useAuth } from '@/hooks/useAuth';
 import AuthGate from '@/components/AuthGate';
 import FeedCard from '@/components/FeedCard';
 import Navbar from '@/components/Navbar';
@@ -18,8 +20,20 @@ const CATEGORIES = [
 
 export default function FeedPage() {
   const { user } = useTelegram();
+  const { ready, isAuthed } = useAuth();
+  const router = useRouter();
   const [signals, setSignals]         = useState([]);
   const [loading, setLoading]         = useState(true);
+
+  // Safety net: if someone lands here without a cookie (e.g. cookie expired mid-session)
+  // redirect them back to "/" so middleware sends them to the landing page
+  useEffect(() => {
+    if (ready && !isAuthed) {
+      // Clear the cookie just in case and go to root
+      document.cookie = 'nort_auth=; path=/; max-age=0';
+      router.replace('/');
+    }
+  }, [ready, isAuthed, router]);
   const [category, setCategory]       = useState('crypto');
   const [filter, setFilter]           = useState('all');
   const [tradeSignal, setTradeSignal] = useState(null);
@@ -36,7 +50,7 @@ export default function FeedPage() {
   const initials = user?.firstName ? user.firstName.slice(0, 2).toUpperCase() : 'NJ';
 
   return (
-    <AuthGate softGate>
+    <AuthGate>
       <div className="app">
 
         {/* ── Mobile-only header ── */}

@@ -1,0 +1,14 @@
+/* LiquidEther.css
+ * Required by LiquidEther.js — the Three.js fluid simulation component.
+ * The container must be position:relative + overflow:hidden so the
+ * WebGL canvas fills it correctly. touch-action:none prevents the
+ * browser's default scroll/zoom gestures from interfering with the
+ * mouse/touch tracking used to drive the fluid simulation.
+ */
+.liquid-ether-container {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
