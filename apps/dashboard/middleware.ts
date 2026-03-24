@@ -5,18 +5,8 @@ import type { NextRequest } from 'next/server';
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 1. Check for Privy token (logged-in state)
-  const authToken = request.cookies.get('privy-token');
-
-  // 2. ROOT LOGIC
-  if (pathname === '/') {
-    // If NOT logged in, rewrite them to the landing page
-    if (!authToken) {
-      return NextResponse.rewrite(new URL('https://nort-landing-nine.vercel.app', request.url));
-    }
-    // If logged in, do nothing (let them see the local dashboard root)
+    // Allow all users to access the main page; AuthGate handles login/signup gating
     return NextResponse.next();
-  }
 
   return NextResponse.next();
 }
@@ -32,6 +22,6 @@ export const config = {
      * - favicon.ico (favicon file)
      * This allows '/' to be caught and processed.
      */
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    '/' ,
   ],
 };
