@@ -1,27 +1,20 @@
-// middleware.ts in your Main NORT Repo
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const authToken = request.cookies.get('privy-token');
 
-    // Allow all users to access the main page; AuthGate handles login/signup gating
-    return NextResponse.next();
-
+  // Redirect unauthenticated users on root to landing page
+  if (pathname === '/') {
+    if (!authToken) {
+      return NextResponse.rewrite(new URL('https://nort-landing-nine.vercel.app', request.url));
+    }
+  }
+  // Allow access to /login and /dashboard for all
   return NextResponse.next();
 }
 
-// 3. The Matcher is critical. It must include '/' but exclude static files.
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * This allows '/' to be caught and processed.
-     */
-    '/' ,
-  ],
+  matcher: ['/', '/login', '/dashboard/:path*'],
 };
