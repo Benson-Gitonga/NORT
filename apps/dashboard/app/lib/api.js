@@ -251,16 +251,26 @@ export async function paperTrade({ marketId, side, amount, price, question: prov
 
 export async function getWallet() {
   const wallet = getStoredWallet();
-  if (!wallet) return { balance: 0, pnl: 0, pnlPct: 0, trades: 0 };
+  if (!wallet) return { balance: 0, pnl: 0, pnlPct: 0, trades: 0, wins: 0, losses: 0, winRate: 0, tradingMode: 'paper' };
 
   const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
   if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`);
   const w = await res.json();
+
+  // Use the right balance based on mode
+  const isReal = w.trading_mode === 'real';
   return {
-    balance: w.paper_balance       ?? 0,
-    pnl:     w.net_pnl             ?? 0,
-    pnlPct:  w.net_pnl_pct         ?? 0,
-    trades:  w.total_trades        ?? 0,
+    balance:     (isReal ? w.real_balance_usdc : w.paper_balance) ?? 0,
+    pnl:         w.net_pnl             ?? 0,
+    pnlPct:      w.net_pnl_pct         ?? 0,
+    trades:      w.total_trades        ?? 0,
+    wins:        w.wins                ?? 0,
+    losses:      w.losses              ?? 0,
+    winRate:     w.win_rate_pct        ?? 0,
+    tradingMode: w.trading_mode        ?? 'paper',
+    // keep both balances available
+    paperBalance:    w.paper_balance    ?? 0,
+    realBalanceUsdc: w.real_balance_usdc ?? 0,
   };
 }
 
@@ -310,18 +320,17 @@ export async function sellTrade(tradeId) {
 
 // ─── LEADERBOARD ─────────────────────────────────────────────────────────────
 
-export async function getLeaderboard(limit = 50) {
-  const res = await fetch(`${BASE}/api/leaderboard?limit=${limit}`);
+export async function getLeaderboard(limit = 50, mode = 'paper') {
+  const res = await fetch(`${BASE}/api/leaderboard?limit=${limit}&mode=${mode}`);
   if (!res.ok) throw new Error(`Leaderboard fetch failed: ${res.status}`);
   const data = await res.json();
   return data.leaderboard || [];
 }
 
-export async function getMyRank(walletAddress) {
+export async function getMyRank(walletAddress, mode = 'paper') {
   if (!walletAddress) return null;
-  // Always send lowercase — the DB stores wallet addresses lowercased
   const addr = walletAddress.toLowerCase();
-  const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(addr)}`);
+  const res = await fetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(addr)}&mode=${mode}`);
   // 404 = user hasn't traded yet — not an error, just no rank card yet
   if (res.status === 404) return null;
   if (!res.ok) return null;
@@ -347,4 +356,69 @@ export async function getAchievements() {
   if (!res.ok) throw new Error(`Achievements fetch failed: ${res.status}`);
   const data = await res.json();
   return data.achievements || [];
+}
+
+// ─── BRIDGE (Phase 2 — LI.FI Base → Polygon) ────────────────────────────────
+
+export async function getBridgeQuote(amountUsdc) {
+  const wallet = getStoredWallet();
+  if (!wallet) throw new Error('No wallet connected');
+  const res = await fetch(
+    `${BASE}/api/bridge/quote?wallet_address=${encodeURIComponent(wallet)}&amount_usdc=${amountUsdc}`
+  );
+  if (!res.ok) throw new Error(`Bridge quote failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function startBridge(amountUsdc, lifiTxHash) {
+  const wallet = getStoredWallet();
+  if (!wallet) throw new Error('No wallet connected');
+  const res = await fetch(`${BASE}/api/bridge/start`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      wallet_address: wallet,
+      amount_usdc:    amountUsdc,
+      lifi_tx_hash:   lifiTxHash,
+    }),
+  });
+  if (!res.ok) throw new Error(`Bridge start failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function getBridgeStatus(bridgeId) {
+  const res = await fetch(`${BASE}/api/bridge/status/${bridgeId}`);
+  if (!res.ok) throw new Error(`Bridge status failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function getBridgeHistory() {
+  const wallet = getStoredWallet();
+  if (!wallet) return { total: 0, bridges: [] };
+  const res = await fetch(
+    `${BASE}/api/bridge/history?wallet_address=${encodeURIComponent(wallet)}`
+  );
+  if (!res.ok) return { total: 0, bridges: [] };
+  return await res.json();
+}
+
+// ─── REAL BALANCE ─────────────────────────────────────────────────────────────
+
+export async function getFullWallet() {
+  const wallet = getStoredWallet();
+  if (!wallet) return { paperBalance: 0, realBalanceUsdc: 0, tradingMode: 'paper', pnl: 0, trades: 0 };
+
+  const res = await fetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
+  if (!res.ok) throw new Error(`Wallet fetch failed: ${res.status}`);
+  const w = await res.json();
+  return {
+    paperBalance:    w.paper_balance       ?? 0,
+    realBalanceUsdc: w.real_balance_usdc   ?? 0,
+    tradingMode:     w.trading_mode        ?? 'paper',
+    pnl:             w.net_pnl             ?? 0,
+    pnlPct:          w.net_pnl_pct         ?? 0,
+    trades:          w.total_trades        ?? 0,
+    // keep legacy shape too
+    balance:         w.paper_balance       ?? 0,
+  };
 }

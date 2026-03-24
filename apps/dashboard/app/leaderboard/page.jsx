@@ -4,6 +4,7 @@ import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
 import { getLeaderboard, getMyRank } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { useTradingMode } from '@/components/TradingModeContext';
 
 const RANK_COLORS = ['#f59e0b', '#a0a0a0', '#b45309'];
 
@@ -35,34 +36,70 @@ function StreakFlame({ streak }) {
   return <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: '#f59e0b' }}>🔥 x{streak}</span>;
 }
 
+// ── Mode toggle pill ──────────────────────────────────────────────────────────
+function ModeTab({ label, active, color, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding:       '6px 16px',
+        borderRadius:  20,
+        border:        `1.5px solid ${active ? color : 'var(--border)'}`,
+        background:    active ? color + '18' : 'transparent',
+        color:         active ? color : 'var(--muted)',
+        fontSize:      12,
+        fontFamily:    'DM Mono, monospace',
+        fontWeight:    active ? 700 : 400,
+        cursor:        'pointer',
+        letterSpacing: '0.03em',
+        transition:    'all 0.15s',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 export default function LeaderboardPage() {
   const { walletAddress } = useAuth();
+  const { mode: tradingMode } = useTradingMode();
+
+  // Default tab = user's current trading mode
+  const [tab, setTab]         = useState(tradingMode || 'paper');
   const [board, setBoard]     = useState([]);
   const [myRank, setMyRank]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
 
+  // When user's trading mode changes, switch the default tab
+  useEffect(() => {
+    setTab(tradingMode || 'paper');
+  }, [tradingMode]);
+
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setBoard([]);
+    setMyRank(null);
     Promise.all([
-      getLeaderboard(50),
-      walletAddress ? getMyRank(walletAddress) : Promise.resolve(null),
+      getLeaderboard(50, tab),
+      walletAddress ? getMyRank(walletAddress, tab) : Promise.resolve(null),
     ])
       .then(([lb, me]) => { setBoard(lb); setMyRank(me); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [walletAddress]);
+  }, [walletAddress, tab]);
 
-  // Top 3 for podium, rest for table (including rank 1-3 again for small boards)
+  const isReal     = tab === 'real';
   const showPodium = board.length >= 2;
-  const top3 = board.slice(0, Math.min(3, board.length));
-  // Table always shows all entries so ranks 1-3 appear even on small boards
-  const tableRows = board;
+  const top3       = board.slice(0, Math.min(3, board.length));
+
+  // Label the balance column correctly per mode
+  const portfolioLabel = isReal ? 'USDC' : 'Portfolio';
 
   return (
     <AuthGate>
-      <div className="app">
+      <div className={`app${isReal ? ' real-mode' : ''}`}>
         <div className="header">
           <div className="header-logo">Leaderboard</div>
           <div className="header-right">
@@ -71,18 +108,36 @@ export default function LeaderboardPage() {
         </div>
 
         <div className="app-scroll">
+          {/* ── Page header + mode toggle ── */}
           <div className="page-header">
             <div>
-              <div className="page-title">Paper Trading Ranks</div>
-              <div className="page-meta">
-                {loading ? 'Loading...' : `${board.length} trader${board.length !== 1 ? 's' : ''} — ranked by portfolio value`}
+              <div className="page-title">
+                {isReal ? '⚡ Real Trading Ranks' : '◈ Paper Trading Ranks'}
               </div>
+              <div className="page-meta">
+                {loading ? 'Loading...' : `${board.length} trader${board.length !== 1 ? 's' : ''} — ranked by ${isReal ? 'real USDC balance' : 'portfolio value'}`}
+              </div>
+            </div>
+            {/* Mode tab toggle */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <ModeTab
+                label="◈ Paper"
+                active={tab === 'paper'}
+                color="var(--teal)"
+                onClick={() => setTab('paper')}
+              />
+              <ModeTab
+                label="⚡ Real"
+                active={tab === 'real'}
+                color="#F59E0B"
+                onClick={() => setTab('real')}
+              />
             </div>
           </div>
 
-          {/* ── My Rank card — only if user has placed trades ── */}
+          {/* ── My Rank card ── */}
           {myRank ? (
-            <div className="my-rank-card fu d1">
+            <div className="my-rank-card fu d1" style={{ borderColor: isReal ? 'rgba(245,158,11,0.3)' : undefined }}>
               <div className="my-rank-left">
                 <div className="my-rank-num">#{myRank.rank}</div>
                 <div>
@@ -118,22 +173,33 @@ export default function LeaderboardPage() {
               </div>
             </div>
           ) : !loading && walletAddress && (
-            /* User is logged in but has no trades yet */
             <div className="my-rank-card fu d1" style={{ textAlign: 'center', padding: 20 }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>🏆</div>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>{isReal ? '⚡' : '🏆'}</div>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>You're not ranked yet</div>
-              <div style={{ fontSize: 12, color: 'var(--g3)' }}>Place your first paper trade to appear on the board</div>
+              <div style={{ fontSize: 12, color: 'var(--g3)' }}>
+                {isReal
+                  ? 'Place your first real trade to appear on the board'
+                  : 'Place your first paper trade to appear on the board'}
+              </div>
+            </div>
+          )}
+
+          {/* ── Real mode notice ── */}
+          {isReal && !loading && board.length === 0 && (
+            <div className="empty fu d2">
+              <div className="empty-icon">⚡</div>
+              <div className="empty-text">No real trades yet — be the first real trader!</div>
             </div>
           )}
 
           {error ? (
             <div className="empty fu d2">
               <div className="empty-icon">!</div>
-              <div className="empty-text">Failed to load leaderboard: {error}</div>
+              <div className="empty-text">Failed to load: {error}</div>
             </div>
           ) : loading ? (
             <div className="lb-table fu d3">
-              {[1, 2, 3, 4, 5].map(i => (
+              {[1,2,3,4,5].map(i => (
                 <div key={i} className="lb-row skeleton-row">
                   <div className="skel-line w40" style={{ height: 10, borderRadius: 4 }} />
                   <div className="skel-line w70" style={{ height: 10, borderRadius: 4 }} />
@@ -141,14 +207,9 @@ export default function LeaderboardPage() {
                 </div>
               ))}
             </div>
-          ) : board.length === 0 ? (
-            <div className="empty fu d2">
-              <div className="empty-icon">🏆</div>
-              <div className="empty-text">No traders yet — be the first to place a paper trade!</div>
-            </div>
-          ) : (
+          ) : board.length === 0 ? null : (
             <>
-              {/* Podium — only when there are 2+ traders */}
+              {/* ── Podium ── */}
               {showPodium && (
                 <div className="podium-wrap fu d2">
                   {top3.map((entry, i) => (
@@ -157,7 +218,7 @@ export default function LeaderboardPage() {
                 </div>
               )}
 
-              {/* Full table — all ranks */}
+              {/* ── Full table ── */}
               <div className="lb-table fu d3">
                 <div className="lb-table-header">
                   <span>#</span>
@@ -166,12 +227,13 @@ export default function LeaderboardPage() {
                   <span className="lb-hide-sm">Win Rate</span>
                   <span className="lb-hide-sm">Streak</span>
                   <span>P&amp;L</span>
-                  <span>Portfolio</span>
+                  <span>{portfolioLabel}</span>
                 </div>
-                {tableRows.map(entry => (
+                {board.map(entry => (
                   <div
                     key={entry.telegram_user_id}
                     className={'lb-row' + (myRank?.telegram_user_id === entry.telegram_user_id ? ' lb-row-me' : '')}
+                    style={isReal ? { borderLeft: '2px solid rgba(245,158,11,0.2)' } : undefined}
                   >
                     <span className="lb-rank">{entry.rank}</span>
                     <span className="lb-trader">
@@ -184,7 +246,9 @@ export default function LeaderboardPage() {
                     <span className="lb-mono" style={{ color: entry.net_pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
                       {entry.net_pnl >= 0 ? '+' : ''}${entry.net_pnl.toFixed(0)}
                     </span>
-                    <span className="lb-mono">${entry.portfolio_value.toFixed(0)}</span>
+                    <span className="lb-mono">
+                      ${(isReal ? entry.real_balance_usdc : entry.portfolio_value ?? 0).toFixed(isReal ? 2 : 0)}
+                    </span>
                   </div>
                 ))}
               </div>

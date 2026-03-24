@@ -1,4 +1,4 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field, Relationship, JSON, Column
 from typing import Optional, List
 from datetime import datetime
 
@@ -9,7 +9,7 @@ class User(SQLModel, table=True):
     telegram_id: Optional[str] = Field(default=None, unique=True)
     username: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    
+
     payments: List["Payment"] = Relationship(back_populates="user")
     trades: List["Trade"] = Relationship(back_populates="user")
 
@@ -65,6 +65,7 @@ class Trade(SQLModel, table=True):
     user: User = Relationship(back_populates="trades")
     market: Market = Relationship(back_populates="trades")
 
+# 6. PaperTrade Table
 class PaperTrade(SQLModel, table=True):
     """Stores all paper trades. No real money is ever moved."""
     __tablename__ = "paper_trades"
@@ -73,20 +74,19 @@ class PaperTrade(SQLModel, table=True):
     telegram_user_id: str = Field(index=True)
     market_id: str
     market_question: str
-    outcome: str                    # "YES" or "NO"
+    outcome: str
     shares: float
-    price_per_share: float          # e.g. 0.65 (65 cents on the dollar)
-    total_cost: float               # shares * price_per_share
-    direction: str                  # "BUY" or "SELL"
-    status: str = Field(default="OPEN")  # OPEN | CLOSED | CANCELLED
-    tx_hash: Optional[str] = None   # Polygon testnet receipt (optional)
+    price_per_share: float
+    total_cost: float
+    direction: str
+    status: str = Field(default="OPEN")
+    tx_hash: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     closed_at: Optional[datetime] = None
-    pnl: Optional[float] = None     # Filled when trade is closed
+    pnl: Optional[float] = None
 
-
+# 7. LeaderboardSnapshot Table
 class LeaderboardSnapshot(SQLModel, table=True):
-    """Daily snapshot of each user's leaderboard stats (for history/charts)."""
     __tablename__ = "leaderboard_snapshots"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -95,25 +95,24 @@ class LeaderboardSnapshot(SQLModel, table=True):
     portfolio_value: float = Field(default=1000.0)
     net_pnl: float = Field(default=0.0)
     total_trades: int = Field(default=0)
-    win_rate: float = Field(default=0.0)   # 0-100
+    win_rate: float = Field(default=0.0)
     snapshot_date: datetime = Field(default_factory=datetime.utcnow)
 
-
+# 8. WalletConfig Table
 class WalletConfig(SQLModel, table=True):
-    """Stores per-user paper wallet balances and settings."""
     __tablename__ = "wallet_config"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True, unique=True)
-    paper_balance: float = Field(default=1000.0)  # Start with $1,000 paper money
+    paper_balance: float = Field(default=1000.0)
     total_deposited: float = Field(default=1000.0)
+    trading_mode: str = Field(default="paper")
+    real_balance_usdc: float = Field(default=0.0)
+    last_balance_sync: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-
-from sqlmodel import JSON, Column
-
-# 6. Conversation Table
+# 9. Conversation Table
 class Conversation(SQLModel, table=True):
     """
     Stores the full chat history per user per market session.
@@ -130,8 +129,7 @@ class Conversation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-
-# 7. UserPermission Table
+# 10. UserPermission Table
 class UserPermission(SQLModel, table=True):
     """
     Auto-trade permission settings per user.
@@ -162,4 +160,81 @@ class UserPermission(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+# 11. BridgeTransaction Table  ← Phase 2: LI.FI bridge state tracking
+class BridgeTransaction(SQLModel, table=True):
+    """
+    Tracks every LI.FI bridge request from Base → Polygon (and back).
 
+    Lifecycle:
+      pending   → bridge tx submitted to Base
+      bridging  → tx confirmed on Base, waiting for Polygon arrival
+      done      → USDC arrived on Polygon, ready to trade
+      failed    → bridge timed out or reverted
+      refunded  → LI.FI issued a refund back to Base
+    """
+    __tablename__ = "bridge_transactions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    wallet_address: str                          # Base wallet that initiated
+
+    # Amounts
+    amount_usdc: float                           # USDC being bridged
+    from_chain: str = Field(default="BASE")      # always BASE for now
+    to_chain: str = Field(default="POL")         # always Polygon for now
+
+    # LI.FI tracking
+    lifi_tx_hash: Optional[str] = None           # tx hash on Base (sending side)
+    lifi_receiving_tx_hash: Optional[str] = None # tx hash on Polygon (receiving side)
+    lifi_tool: Optional[str] = None              # bridge tool used (e.g. "stargate")
+
+    # Status
+    status: str = Field(default="pending")       # pending|bridging|done|failed|refunded
+    error_message: Optional[str] = None
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+    # Link to the real trade that triggered this bridge (optional)
+    real_trade_id: Optional[int] = None
+
+# 12. RealTrade Table  ← Phase 2: real on-chain trade history
+class RealTrade(SQLModel, table=True):
+    """
+    Stores real on-chain trades on Polymarket (Polygon).
+    Separate from PaperTrade so paper history is never contaminated.
+
+    status: pending_bridge → bridging → pending_execution → open → closed → failed
+    """
+    __tablename__ = "real_trades"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    wallet_address: str
+
+    # Market info
+    market_id: str
+    market_question: str
+    outcome: str                                 # YES or NO
+    shares: float
+    price_per_share: float                       # price at execution
+    total_cost_usdc: float
+
+    # Bridge
+    bridge_tx_id: Optional[int] = None          # FK to BridgeTransaction
+    bridged_amount_usdc: float = Field(default=0.0)
+
+    # On-chain execution
+    polymarket_order_id: Optional[str] = None   # Polymarket CLOB order ID
+    polygon_tx_hash: Optional[str] = None       # tx hash on Polygon
+
+    # Result
+    status: str = Field(default="pending_bridge")
+    pnl: Optional[float] = None
+    settled_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

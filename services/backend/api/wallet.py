@@ -1,64 +1,114 @@
 """
-Wallet connection routes for Polymarket AI Assistant.
-Intern 5 - Wallet Configuration
+Wallet connection routes for NORT.
 
 Endpoints:
-  POST /wallet/connect          — Register a real MetaMask wallet
-  POST /wallet/privy-webhook    — Auto-called by Privy when user connects
-  GET  /wallet/summary          — View paper balance + trade history
+  POST /wallet/connect          – Register/upsert a wallet (called by dashboard + bot)
+  POST /wallet/privy-webhook    – Receives ALL Privy webhook events (svix verified)
+  GET  /wallet/summary          – Paper balance + trade history
+
+Privy uses svix for webhook delivery. Verification uses three headers:
+  svix-id, svix-timestamp, svix-signature
+NOT a simple HMAC-SHA256 of the body. The PRIVY_WEBHOOK_SECRET (whsec_...) is
+the svix signing key — pass it to the svix Webhook verifier directly.
+
+Supported Privy webhook events handled here:
+  user.created              → register wallet in DB
+  wallet.created_for_user   → update wallet address (may differ from user.created)
+  transaction.confirmed     → log confirmed on-chain tx
+  transaction.failed        → log failed tx for debugging
+  funds.deposited           → credit real balance (future use)
 """
 
 import os
-import hmac
 import json
-import hashlib
-
-# Validate required env vars at import time so the problem is obvious at startup
-def _check_env():
-    missing = [v for v in ["PRIVY_WEBHOOK_SECRET"] if not os.getenv(v)]
-    if missing:
-        print(f"[wallet] WARNING: missing env vars: {', '.join(missing)}. "
-              f"Privy webhook will reject all requests until these are set.")
-_check_env()
+import logging
+from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from services.backend.data.database import get_session
 from services.backend.core.paper_trading import (
     connect_wallet,
     get_user_by_telegram,
     get_wallet_summary,
+    _ensure_wallet_config,
 )
+from services.backend.data.models import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Wallet"], redirect_slashes=False)
 
 
-class WalletConnectRequest(BaseModel):
-    wallet_address: str                      # Real MetaMask address e.g. "0xABC...123"
-    telegram_id: Optional[str] = None        # Links Telegram bot to this wallet
-    username: Optional[str] = None           # Optional display name
+# ─── SVIX VERIFICATION ────────────────────────────────────────────────────────
+# Privy uses svix. Install: pip install svix
+# The PRIVY_WEBHOOK_SECRET starts with "whsec_" — this is the svix signing key.
 
+def _verify_privy_webhook(body: bytes, headers: dict) -> dict:
+    """
+    Verify a Privy webhook using svix.
+    Returns the parsed payload dict if valid.
+    Raises HTTPException 401 if invalid.
+    """
+    secret = os.getenv("PRIVY_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(status_code=500, detail="PRIVY_WEBHOOK_SECRET not configured.")
+
+    try:
+        from svix.webhooks import Webhook, WebhookVerificationError
+        wh = Webhook(secret)
+        payload = wh.verify(body, headers)
+        return payload
+    except ImportError:
+        # svix not installed — fall back to simple HMAC verification
+        import hmac, hashlib
+        sig_header = headers.get("svix-signature", "")
+        # svix sends "v1,<base64sig>" — extract the raw signature
+        sigs = [s.split(",", 1)[1] for s in sig_header.split(" ") if "," in s]
+        timestamp = headers.get("svix-timestamp", "")
+        signed_content = f"{headers.get('svix-id', '')}.{timestamp}.{body.decode()}"
+        import base64
+        key = base64.b64decode(secret.replace("whsec_", ""))
+        expected = base64.b64encode(
+            hmac.new(key, signed_content.encode(), hashlib.sha256).digest()
+        ).decode()
+        if expected not in sigs:
+            raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+        try:
+            return json.loads(body)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+    except Exception as e:
+        logger.warning(f"[privy-webhook] Verification failed: {e}")
+        raise HTTPException(status_code=401, detail=f"Webhook verification failed: {e}")
+
+
+# ─── MODELS ───────────────────────────────────────────────────────────────────
+
+class WalletConnectRequest(BaseModel):
+    wallet_address: str
+    telegram_id: Optional[str] = None
+    username: Optional[str] = None
+    privy_user_id: Optional[str] = None   # NEW: Privy DID (did:privy:...)
+
+
+# ─── ENDPOINTS ────────────────────────────────────────────────────────────────
 
 @router.post("/wallet/connect")
 def wallet_connect(
     request: WalletConnectRequest,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
-    Register a MetaMask wallet into the paper trading system.
+    Register or upsert a wallet. Called by:
+    - Dashboard on every login (AuthSync.jsx)
+    - Telegram bot when user links wallet
+    - Privy webhook handler (internally)
 
-    Called by:
-    - Dashboard after MetaMask connects (Intern 6)
-    - Telegram bot when user links their wallet (Intern 4)
-
-    First time → creates User + WalletConfig with 1000 paper USDC.
-    Repeat calls → safe, updates telegram_id if provided.
-
-    Example body:
-        { "wallet_address": "0xABC...123", "telegram_id": "987654321" }
+    Idempotent — safe to call multiple times with the same wallet.
     """
     try:
         user = connect_wallet(
@@ -67,89 +117,206 @@ def wallet_connect(
             telegram_id=request.telegram_id,
             username=request.username,
         )
+        # Store privy_user_id if provided (future use for server-side Privy API calls)
+        if request.privy_user_id and not getattr(user, "privy_user_id", None):
+            try:
+                user.privy_user_id = request.privy_user_id
+                session.add(user)
+                session.commit()
+                session.refresh(user)
+            except Exception:
+                pass  # Column may not exist yet — migration pending
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     return {
-        "status": "connected",
-        "wallet_address": user.wallet_address,
+        "status":          "connected",
+        "wallet_address":  user.wallet_address,
         "telegram_linked": user.telegram_id is not None,
-        "username": user.username,
-        "note": "Paper wallet initialized with $1000 USDC (paper only).",
+        "username":        user.username,
+        "note":            "Paper wallet initialized with $1000 USDC (paper only).",
     }
 
 
 @router.post("/wallet/privy-webhook")
 async def privy_webhook(
     request: Request,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
-    Privy auto-calls this when a new user connects their wallet.
+    Receives ALL Privy webhook events.
 
-    Setup in Privy Dashboard:
-      Configuration → Webhooks → Add Webhook
-      Event: user.created
-      URL:   http://your-server:8000/api/wallet/privy-webhook
+    Configure in Privy Dashboard → Settings → Webhooks:
+      URL: https://your-render-url.onrender.com/api/wallet/privy-webhook
+      Events to subscribe:
+        ✓ user.created
+        ✓ wallet.created_for_user
+        ✓ transaction.confirmed
+        ✓ transaction.failed
+        ✓ funds.deposited
+        ✓ user.authenticated   (optional — for session tracking)
 
-    Requires in .env:
-      PRIVY_WEBHOOK_SECRET=your-secret-from-privy-dashboard
+    The endpoint MUST return HTTP 200 for Privy to mark delivery as successful.
+    If your server is not yet deployed/reachable, webhooks show as "Pending".
+
+    IMPORTANT: The webhook URL must be publicly accessible (not localhost).
+    For local dev use ngrok: `ngrok http 8000` then set the ngrok URL.
     """
     body = await request.body()
 
-    privy_signature = request.headers.get("privy-signature", "")
-    webhook_secret  = os.getenv("PRIVY_WEBHOOK_SECRET", "")
+    # Build headers dict for svix verification
+    svix_headers = {
+        "svix-id":        request.headers.get("svix-id", ""),
+        "svix-timestamp": request.headers.get("svix-timestamp", ""),
+        "svix-signature": request.headers.get("svix-signature", ""),
+    }
 
-    if not webhook_secret:
-        raise HTTPException(status_code=500, detail="PRIVY_WEBHOOK_SECRET not set in environment.")
+    # Verify signature
+    payload = _verify_privy_webhook(body, svix_headers)
 
-    # hmac.new() is the correct Python 3 call (not hmac.HMAC directly).
-    # digestmod must be passed as a callable (hashlib.sha256), not as a string.
-    expected = hmac.new(webhook_secret.encode(), body, digestmod=hashlib.sha256).hexdigest()
+    event_type = payload.get("type", "unknown")
+    logger.info(f"[privy-webhook] Received event: {event_type}")
 
-    # Privy sends the signature as "sha256=<hex>" — strip the prefix if present
-    sig_to_compare = privy_signature.removeprefix("sha256=")
+    # ── user.created ──────────────────────────────────────────────────────────
+    if event_type == "user.created":
+        return _handle_user_created(payload, session)
 
-    if not hmac.compare_digest(sig_to_compare, expected):
-        raise HTTPException(status_code=401, detail="Invalid Privy webhook signature.")
+    # ── wallet.created_for_user ───────────────────────────────────────────────
+    elif event_type == "wallet.created_for_user":
+        return _handle_wallet_created(payload, session)
 
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON from Privy.")
+    # ── transaction.confirmed ─────────────────────────────────────────────────
+    elif event_type == "transaction.confirmed":
+        return _handle_tx_confirmed(payload, session)
 
-    # Privy payload: { "type": "user.created", "user": { "wallet": { "address": "0x..." } } }
-    wallet_address = (
-        payload
-        .get("user", {})
-        .get("wallet", {})
-        .get("address")
-    )
+    # ── transaction.failed ────────────────────────────────────────────────────
+    elif event_type == "transaction.failed":
+        tx_hash = payload.get("data", {}).get("transaction_hash", "unknown")
+        logger.warning(f"[privy-webhook] Transaction failed: {tx_hash}")
+        return {"status": "logged", "event": event_type, "tx_hash": tx_hash}
+
+    # ── funds.deposited ───────────────────────────────────────────────────────
+    elif event_type == "funds.deposited":
+        return _handle_funds_deposited(payload, session)
+
+    # ── privy.test (dashboard test button) ───────────────────────────────────
+    elif event_type == "privy.test":
+        logger.info("[privy-webhook] Test webhook received successfully ✓")
+        return {"status": "ok", "event": "privy.test", "message": "Webhook endpoint is reachable."}
+
+    # ── unhandled event (still return 200 so Privy marks as delivered) ────────
+    else:
+        logger.info(f"[privy-webhook] Unhandled event type: {event_type} — ignoring.")
+        return {"status": "ignored", "event": event_type}
+
+
+# ─── EVENT HANDLERS ───────────────────────────────────────────────────────────
+
+def _handle_user_created(payload: dict, session: Session) -> dict:
+    """
+    Privy payload shape for user.created:
+    {
+      "type": "user.created",
+      "user": {
+        "id": "did:privy:...",
+        "linked_accounts": [
+          { "type": "wallet", "address": "0x...", "chain_type": "ethereum" },
+          { "type": "email",  "address": "user@example.com" }
+        ]
+      }
+    }
+    """
+    user_obj = payload.get("user", {})
+    privy_user_id = user_obj.get("id", "")
+    linked = user_obj.get("linked_accounts", [])
+
+    # Find the first EVM wallet address
+    wallet_address = None
+    for account in linked:
+        if account.get("type") == "wallet" and account.get("chain_type") == "ethereum":
+            wallet_address = account.get("address")
+            break
+
+    if not wallet_address:
+        logger.info(f"[privy-webhook] user.created: no wallet found for {privy_user_id}")
+        return {"status": "skipped", "reason": "No EVM wallet in linked_accounts.", "privy_id": privy_user_id}
+
+    user = connect_wallet(wallet_address=wallet_address.lower(), session=session)
+    logger.info(f"[privy-webhook] user.created: registered {wallet_address} for {privy_user_id}")
+    return {"status": "ok", "event": "user.created", "wallet_address": wallet_address}
+
+
+def _handle_wallet_created(payload: dict, session: Session) -> dict:
+    """
+    Fires when Privy creates an embedded wallet for a user.
+    Payload: { "type": "wallet.created_for_user", "wallet": { "address": "0x...", ... }, "user": {...} }
+    """
+    wallet_obj = payload.get("wallet", {})
+    wallet_address = wallet_obj.get("address", "")
 
     if not wallet_address:
         return {"status": "skipped", "reason": "No wallet address in payload."}
 
-    user = connect_wallet(wallet_address=wallet_address, session=session)
+    user = connect_wallet(wallet_address=wallet_address.lower(), session=session)
+    logger.info(f"[privy-webhook] wallet.created_for_user: {wallet_address}")
+    return {"status": "ok", "event": "wallet.created_for_user", "wallet_address": wallet_address}
 
+
+def _handle_tx_confirmed(payload: dict, session: Session) -> dict:
+    """
+    Fires when a transaction broadcast by Privy is confirmed on-chain.
+    Useful for confirming x402 payments and bridge transactions.
+    Payload: { "type": "transaction.confirmed", "data": { "transaction_hash": "0x...", ... } }
+    """
+    data = payload.get("data", {})
+    tx_hash = data.get("transaction_hash", "")
+    from_address = data.get("from_address", "").lower()
+    chain_id = data.get("chain_id", "")
+
+    logger.info(f"[privy-webhook] transaction.confirmed: {tx_hash} from {from_address} on chain {chain_id}")
+
+    # Future: cross-reference with pending x402 payments or bridge transactions here
     return {
-        "status": "ok",
-        "wallet_address": user.wallet_address,
+        "status":   "ok",
+        "event":    "transaction.confirmed",
+        "tx_hash":  tx_hash,
+        "chain_id": chain_id,
     }
 
+
+def _handle_funds_deposited(payload: dict, session: Session) -> dict:
+    """
+    Fires when Privy detects a USDC deposit to a tracked wallet.
+    Future use: credit real_balance_usdc in WalletConfig.
+    """
+    data = payload.get("data", {})
+    wallet_address = data.get("wallet_address", "").lower()
+    amount = data.get("amount", 0)
+    token = data.get("token_symbol", "USDC")
+    chain_id = data.get("chain_id", "")
+
+    logger.info(f"[privy-webhook] funds.deposited: {amount} {token} → {wallet_address} on chain {chain_id}")
+
+    # TODO Phase 3: update WalletConfig.real_balance_usdc when Fonbnk deposits arrive
+    return {
+        "status":         "ok",
+        "event":          "funds.deposited",
+        "wallet_address": wallet_address,
+        "amount":         amount,
+        "token":          token,
+    }
+
+
+# ─── WALLET SUMMARY ───────────────────────────────────────────────────────────
 
 @router.get("/wallet/summary")
 def wallet_summary(
     wallet_address: Optional[str] = None,
     telegram_user_id: Optional[str] = None,
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
     """
     Get paper wallet summary. Accepts wallet_address OR telegram_user_id.
-
-    Used by:
-    - Dashboard (Intern 6)
-    - Telegram /portfolio command (Intern 4)
-    - OpenClaw get_wallet_summary() skill (Intern 3)
 
     Examples:
         GET /wallet/summary?wallet_address=0xABC...123
@@ -158,7 +325,7 @@ def wallet_summary(
     if not wallet_address and not telegram_user_id:
         raise HTTPException(
             status_code=400,
-            detail="Provide either wallet_address or telegram_user_id."
+            detail="Provide either wallet_address or telegram_user_id.",
         )
 
     try:

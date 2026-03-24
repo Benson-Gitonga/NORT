@@ -1,0 +1,1 @@
+C:\Users\duskk\OneDrive - Strathmore University\Projects\NORT\.venv\Scripts\python.exe: can't find '__main__' module in 'C:\\Users\\duskk\\OneDrive'

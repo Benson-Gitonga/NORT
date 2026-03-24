@@ -1,5 +1,6 @@
 "use client";
 import { PrivyProvider } from "@privy-io/react-auth";
+import { base, polygon } from "viem/chains";
 
 export default function PrivyProvidersInner({ children }) {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
@@ -8,17 +9,34 @@ export default function PrivyProvidersInner({ children }) {
     <PrivyProvider
       appId={appId}
       config={{
-        // Allow Google login + wallet connect
+        // ─── CHAIN CONFIG ─────────────────────────────────────────────────
+        // defaultChain: Base — all embedded wallets are created on Base.
+        // Polygon is supported for future Polymarket bridging (Phase 2).
+        defaultChain: base,
+        supportedChains: [base, polygon],
+
+        // ─── LOGIN METHODS ────────────────────────────────────────────────
         loginMethods: ["google", "wallet", "email"],
-        // Auto-create an embedded wallet for every user (Google, email, etc.)
-        // This is what gives every user a wallet address even without MetaMask
+
+        // ─── EMBEDDED WALLETS ─────────────────────────────────────────────
         embeddedWallets: {
           createOnLogin: "users-without-wallets",
+          requireUserPasswordOnCreate: false,
+          showWalletUIs: true,
         },
+
+        // ─── EXTERNAL WALLETS (MetaMask, Coinbase, Rainbow) ───────────────
+        externalWallets: {
+          coinbaseWallet: {
+            connectionOptions: "smartWalletOnly",
+          },
+        },
+
+        // ─── APPEARANCE ───────────────────────────────────────────────────
         appearance: {
           theme: "dark",
-          accentColor: "#7c3aed",
-          logo: "",
+          accentColor: "#00A99D",
+          walletList: ["metamask", "coinbase_wallet", "rainbow"],
         },
       }}
     >
