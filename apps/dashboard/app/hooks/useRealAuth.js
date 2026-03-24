@@ -3,22 +3,6 @@ import { useEffect, useState, useCallback } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useTelegram } from "./useTelegram";
 
-// ─── COOKIE HELPERS ───────────────────────────────────────────────────────────
-// The middleware reads "nort_auth" to decide landing vs dashboard at "/".
-// We set it on login and clear it on logout.
-function setAuthCookie() {
-  try {
-    // 30-day expiry — same feel as "remember me"
-    const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString();
-    document.cookie = `nort_auth=true; path=/; expires=${expires}; SameSite=Lax`;
-  } catch {}
-}
-function clearAuthCookie() {
-  try {
-    document.cookie = "nort_auth=; path=/; max-age=0; SameSite=Lax";
-  } catch {}
-}
-
 const BASE_CHAIN_ID = 8453;           // Base mainnet
 const BASE_CHAIN_ID_HEX = "0x2105";  // 8453 in hex — used by MetaMask eth_chainId
 
@@ -37,22 +21,6 @@ export function useRealAuth() {
   const [chainSwitchError, setChainSwitchError] = useState(null);
 
   useEffect(() => { setInitialized(true); }, []);
-
-  // ─── SYNC AUTH COOKIE WITH PRIVY STATE ────────────────────────────────────
-  // When Privy reports authenticated=true  → set the nort_auth cookie
-  // When Privy reports authenticated=false → clear it (e.g. session expired)
-  // The middleware reads this cookie to route "/" correctly on the server.
-  useEffect(() => {
-    if (!privyReady) return;
-    if (authenticated || tgUser) {
-      setAuthCookie();
-    } else {
-      clearAuthCookie();
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.removeItem('nort_redirected');
-      }
-    }
-  }, [privyReady, authenticated, tgUser]);
 
   // ─── FIND THE RIGHT WALLET ─────────────────────────────────────────────────
   // Privy embedded wallet (created by Privy for Google/email users)
@@ -112,12 +80,10 @@ export function useRealAuth() {
 
   const logout = async () => {
     try { await privyLogout(); } catch {}
-    clearAuthCookie();
     try {
       window.localStorage.removeItem("walletAddress");
       window.localStorage.removeItem("nort_auth");
       window.localStorage.removeItem("nort_username");
-      window.sessionStorage.removeItem('nort_redirected');
     } catch {}
     window.location.href = "/";
   };

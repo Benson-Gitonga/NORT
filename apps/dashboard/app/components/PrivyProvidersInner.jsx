@@ -27,9 +27,6 @@ export default function PrivyProvidersInner({ children }) {
 
         // ─── EXTERNAL WALLETS (MetaMask, Coinbase, Rainbow) ───────────────
         externalWallets: {
-          solana: {
-            enabled: false,
-          },
           coinbaseWallet: {
             connectionOptions: "smartWalletOnly",
           },
