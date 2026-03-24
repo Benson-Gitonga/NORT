@@ -17,8 +17,8 @@ OUTPUT JSON ONLY — no explanation, no markdown, no preamble:
 
 {
   "market_id": "<id>",
-  "summary": "<1-2 sentence explanation of what this market is and current situation>",
-  "why_trending": "<reason this market is worth watching based on news and signals>",
+  "summary": "<1-2 sentence explanation of the market. If FREE MODE, end this with a strong hook to unlock Premium for precise entry/exit targets>",
+  "why_trending": "<reason this market is worth watching. If FREE MODE, keep it vague >",
   "risk_factors": ["<risk1>", "<risk2>", "<risk3>"],
   "suggested_plan": "BUY YES | BUY NO | WAIT",
   "confidence": <0.0-1.0>,

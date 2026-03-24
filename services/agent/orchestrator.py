@@ -27,11 +27,11 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-OPENCLAW_URL   = os.getenv("OPENCLAW_URL", "https://openrouter.ai/api/v1/chat/completions")
-OPENCLAW_TOKEN = os.getenv("OPENCLAW_TOKEN", "").strip()
+OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 
 OPENROUTER_HEADERS = {
-    "Authorization": f"Bearer {OPENCLAW_TOKEN}",
+    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
     "Content-Type":  "application/json",
     "HTTP-Referer":  "https://nort.onrender.com",
     "X-Title":       "Nort Advisor",
@@ -125,14 +125,14 @@ Do NOT include any explanation or extra text. JSON only.
 """
 
     payload = {
-        "model": "llama-3.1-8b-instant",  # Free / cheap tier on OpenRouter/Groq
+        "model": "meta-llama/llama-3.2-3b-instruct",  # Lightweight model (fractions of a cent) to bypass rate limits
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 30,
     }
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(OPENCLAW_URL, json=payload, headers=OPENROUTER_HEADERS)
+            resp = await client.post(OPENROUTER_URL, json=payload, headers=OPENROUTER_HEADERS)
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"].strip()
 
@@ -211,18 +211,22 @@ async def run_synthesis(
     """
     from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
 
-    model = "llama-3.3-70b-versatile" if premium else "llama-3.3-70b-versatile"
+    if premium:
+        model = "anthropic/claude-3.5-sonnet"
+        tier_instruction = (
+            "\nPREMIUM MODE: Provide a 3-paragraph deep-dive. Include exact entry/exit odds targets "
+            "and a precise position sizing recommendation in USDC."
+        )
+    else:
+        # Use an extremely cheap paid model to bypass strict concurrency rate limits on free OpenRouter endpoints
+        model = "meta-llama/llama-3.1-8b-instruct"
+        tier_instruction = (
+            "\nFREE MODE: Your analysis must be 'vaguely detailed'. Use sophisticated financial and analytical language to sound highly thorough and detailed, but remain entirely vague on actionable intelligence. "
+            "Discuss 'shifting momentum', 'building sentiment', and 'complex tech indicators' without giving away the actual specific numbers. Do not give exact odds, entry targets, or precise position sizing. "
+            "At the end, strongly encourage the user to unlock PREMIUM advice for the actual numbers, precise odds targets, deep-dive analysis, and position sizing."
+        )
 
-    lang_instruction = (
-        "Respond ENTIRELY in Swahili (Kiswahili). Keep all JSON keys in English."
-        if language == "sw" else
-        "Respond in English."
-    )
-
-    premium_instruction = (
-        "\nPREMIUM MODE: Provide a 3-paragraph deep-dive. Include exact entry/exit odds targets "
-        "and a precise position sizing recommendation in USDC."
-    ) if premium else ""
+    lang_instruction = "Respond entirely in English. Do NOT translate JSON keys."
 
     user_message = f"""/advice {market_id}
 
@@ -230,7 +234,7 @@ MARKET QUESTION: {market_question}
 
 ━━━ LANGUAGE INSTRUCTION ━━━
 {lang_instruction}
-{premium_instruction}
+{tier_instruction}
 
 ━━━ TECHNICAL ANALYSIS (TechnicalAgent) ━━━
 Current Odds:      {technical.get('current_odds', 'N/A')}
@@ -282,9 +286,15 @@ Return ONLY valid JSON. The market_id field must be exactly: {market_id}
     }
 
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(OPENCLAW_URL, json=payload, headers=OPENROUTER_HEADERS)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        try:
+            resp = await client.post(OPENROUTER_URL, json=payload, headers=OPENROUTER_HEADERS)
+            if resp.status_code != 200:
+                print(f"[Synthesis] OpenRouter Error ({model}): {resp.status_code} - {resp.text}")
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"[Synthesis] Orchestrator Exception ({model}): {type(e).__name__} - {e}")
+            raise e
 
 
 # ─────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ from typing import Optional
 from tavily import TavilyClient
 from dotenv import load_dotenv
 from sqlmodel import Session, select
+from deep_translator import GoogleTranslator
 
 load_dotenv()
 
@@ -18,8 +19,8 @@ from services.backend.data.models import Market, AISignal
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
-OPENCLAW_URL   = os.getenv("OPENCLAW_URL", "https://openrouter.ai/api/v1/chat/completions")
-OPENCLAW_TOKEN = os.getenv("OPENCLAW_TOKEN", "").strip()
+OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
 # ─────────────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ class AdviceRequest(BaseModel):
     market_id: str
     telegram_id: Optional[str] = None
     premium: bool = False
+    language: str = "en"
 
 class AdviceResponse(BaseModel):
     market_id: str
@@ -114,8 +116,8 @@ async def call_openclaw(
     market_signal: dict,
     search_context: dict
 ) -> str:
-    if not OPENCLAW_TOKEN:
-        raise HTTPException(status_code=503, detail="Missing OPENCLAW_TOKEN in .env")
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(status_code=503, detail="Missing OPENROUTER_API_KEY in .env")
 
     user_message = f"""/advice {market_id}
 
@@ -144,7 +146,7 @@ Return JSON only. The market_id field must be exactly: {market_id}
 """
 
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "meta-llama/llama-3.3-70b-instruct:free",
         "messages": [
             {"role": "system", "content": ADVICE_SYSTEM_PROMPT},
             {"role": "user",   "content": user_message}
@@ -156,10 +158,10 @@ Return JSON only. The market_id field must be exactly: {market_id}
     async with httpx.AsyncClient(timeout=120) as client:
         try:
             response = await client.post(
-                OPENCLAW_URL,
+                OPENROUTER_URL,
                 json=payload,
                 headers={
-                    "Authorization": f"Bearer {OPENCLAW_TOKEN}",
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://nort.onrender.com",
                     "X-Title": "Nort Advisor"
@@ -179,7 +181,7 @@ Return JSON only. The market_id field must be exactly: {market_id}
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/advice/debug")
-async def debug_openclaw():
+async def debug_openrouter():
     market_question = "Will MicroStrategy sell any Bitcoin in 2025?"
     search_context = await search_prefetch(market_question)
     raw = await run_orchestrator(
@@ -348,8 +350,34 @@ async def get_advice(request: AdviceRequest):
         market_signal=market_signal,
         search_context=search_context,
         telegram_id=request.telegram_id,
-        premium=request.premium
+        premium=request.premium,
+        language=request.language
     )
 
-    print(f"[Agent] Raw response: {raw_response}")
-    return parse_response(raw_response, request.market_id, tool_calls_used)
+    # 5. Parse → return AdviceResponse
+    response_obj = parse_response(raw_response, request.market_id, tool_calls_used)
+
+    # 6. Post-translate text fields if Swahili is requested
+    if request.language == "sw":
+        translator = GoogleTranslator(source='en', target='sw')
+        try:
+            response_obj.summary = translator.translate(response_obj.summary)
+            response_obj.why_trending = translator.translate(response_obj.why_trending)
+            response_obj.risk_factors = [translator.translate(rf) for rf in response_obj.risk_factors]
+            response_obj.disclaimer = translator.translate(response_obj.disclaimer)
+            if response_obj.stale_data_warning:
+                response_obj.stale_data_warning = translator.translate(response_obj.stale_data_warning)
+
+            # Manually map the ENUM to ensure reliable translation
+            plan_map = {
+                "BUY YES": "NUNUA NDIYO",
+                "BUY NO": "NUNUA HAPANA",
+                "WAIT": "SUBIRI"
+            }
+            if response_obj.suggested_plan in plan_map:
+                response_obj.suggested_plan = plan_map[response_obj.suggested_plan]
+
+        except Exception as e:
+            print(f"[Translation Error] Could not translate to Swahili: {e}")
+
+    return response_obj
