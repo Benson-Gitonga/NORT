@@ -11,10 +11,12 @@ from services.backend.api.advice import router as advice_router
 from services.backend.api.leaderboard import router as leaderboard_router
 from services.backend.api.fx import router as fx_router
 from services.backend.api.mode import router as mode_router
-from services.backend.api.bridge import router as bridge_router     # Phase 2
+from services.backend.api.bridge import router as bridge_router
+from services.backend.api.permissions import router as permissions_router  # Task 10
 from services.backend.api.telegram import router as telegram_router
 from services.backend.api.x402 import router as x402_router
 from services.backend.data.database import init_db, engine
+from services.backend.core.market_watch import run_market_watch  # Task 7
 
 
 @asynccontextmanager
@@ -30,7 +32,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Market sync failed (will retry on first /markets request): {e}")
 
+    # Task 7: Start the proactive market alert scheduler
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(run_market_watch, "interval", minutes=15, id="market_watch")
+    scheduler.start()
+    print("Market watch scheduler started (every 15 minutes).")
+
     yield
+
+    scheduler.shutdown()
     print("Shutting down...")
 
 
@@ -46,27 +57,29 @@ app.add_middleware(
 
 # ─── ROUTERS ─────────────────────────────────────────────────────────────────
 app.include_router(markets_router)
-app.include_router(markets_router,     prefix="/api")
+app.include_router(markets_router,      prefix="/api")
 app.include_router(signals_router)
-app.include_router(signals_router,     prefix="/api")
+app.include_router(signals_router,      prefix="/api")
 app.include_router(trades_router)
-app.include_router(trades_router,      prefix="/api")
+app.include_router(trades_router,       prefix="/api")
 app.include_router(wallet_router)
-app.include_router(wallet_router,      prefix="/api")
+app.include_router(wallet_router,       prefix="/api")
 app.include_router(advice_router)
-app.include_router(advice_router,      prefix="/api")
+app.include_router(advice_router,       prefix="/api")
 app.include_router(telegram_router)
-app.include_router(telegram_router,    prefix="/api")
+app.include_router(telegram_router,     prefix="/api")
 app.include_router(x402_router)
-app.include_router(x402_router,        prefix="/api")
+app.include_router(x402_router,         prefix="/api")
 app.include_router(leaderboard_router)
-app.include_router(leaderboard_router, prefix="/api")
+app.include_router(leaderboard_router,  prefix="/api")
 app.include_router(fx_router)
-app.include_router(fx_router,          prefix="/api")
+app.include_router(fx_router,           prefix="/api")
 app.include_router(mode_router)
-app.include_router(mode_router,        prefix="/api")
-app.include_router(bridge_router)      # GET|POST /bridge/*
-app.include_router(bridge_router,      prefix="/api")   # /api/bridge/*
+app.include_router(mode_router,         prefix="/api")
+app.include_router(bridge_router)
+app.include_router(bridge_router,       prefix="/api")
+app.include_router(permissions_router)           # POST|GET /permissions
+app.include_router(permissions_router,  prefix="/api")
 
 
 @app.api_route("/", methods=["GET", "HEAD"])

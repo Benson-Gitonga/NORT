@@ -4,6 +4,8 @@ import Providers from "./providers";
 import AuthSync from "./components/AuthSync";
 import { AchievementProvider } from "./components/AchievementContext";
 import { TradingModeProvider } from "./components/TradingModeContext";
+// P-GLOBAL CHAT: Import floating chat button — renders on every page via layout
+import GlobalChatButton from "./components/GlobalChatButton";
 
 export default function RootLayout({ children }) {
   return (
@@ -17,6 +19,8 @@ export default function RootLayout({ children }) {
             <TradingModeProvider>
               <AuthSync />
               {children}
+              {/* P-GLOBAL CHAT: Floating chat FAB mounts here so it persists across all page navigations */}
+              <GlobalChatButton />
             </TradingModeProvider>
           </AchievementProvider>
         </Providers>

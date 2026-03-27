@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from services.backend.data.database import engine
-from services.backend.data.models import Market, UserPermission
+from services.backend.data.models import Market, UserPermission, PendingTrade
 
 # Internal execution backend URL (Intern 4's routes)
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
@@ -152,6 +152,39 @@ class AutoTradeEngine:
         outcome = "YES" if "YES" in suggested_plan else "NO"
 
         # ── GATE 5: Route to paper or real trade ─────────────────────────────
+        # ── GATE 5: Route to paper, real, or confirm ─────────────────────────
+        # Task 11: "confirm" mode creates a PendingTrade and returns a signal
+        # for the Telegram bot to ask the user before any money moves.
+        if perm.trade_mode == "confirm":
+            from datetime import timedelta
+            with Session(engine) as db:
+                market = db.get(Market, market_id)
+                question = market.question if market else market_id
+                pending = PendingTrade(
+                    telegram_user_id=telegram_id,
+                    market_id=market_id,
+                    market_question=question,
+                    suggested_plan=suggested_plan,
+                    confidence=confidence,
+                    amount_usdc=safe_amount,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+                )
+                db.add(pending)
+                db.commit()
+                db.refresh(pending)
+            print(f"[AutoTradeEngine] CONFIRM mode — PendingTrade id={pending.id} created")
+            return {
+                "executed": False,
+                "reason": (
+                    f"Confirmation required: {suggested_plan} on {market_id} "
+                    f"for ${safe_amount} USDC. "
+                    f"Reply YES to confirm (POST /trade/confirm/{pending.id}) "
+                    f"or NO to cancel. Expires in 10 minutes."
+                ),
+                "mode": "confirm",
+                "pending_trade_id": pending.id,
+            }
+
         trade_payload = {
             "telegram_id": telegram_id,
             "market_id":   market_id,

@@ -17,9 +17,11 @@ load_dotenv()
 
 from services.agent.orchestrator import run_orchestrator
 from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
+from services.agent.policies import check_policy
+from services.agent.executor import AutoTradeEngine
 from services.backend.core.x402_verifier import has_premium_access, payment_required_payload
 from services.backend.data.database import engine
-from services.backend.data.models import Market, AISignal, AuditLog
+from services.backend.data.models import Market, AISignal, AuditLog, Conversation
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -47,6 +49,7 @@ class AdviceResponse(BaseModel):
     disclaimer: str
     tool_calls_used: list[str]
     stale_data_warning: Optional[str] = None
+    auto_trade_result: Optional[dict] = None   # populated if AutoTradeEngine ran
 
 # ─────────────────────────────────────────────────────────────
 # Tavily Search
@@ -387,16 +390,155 @@ def write_audit_log(
 
 
 # ─────────────────────────────────────────────────────────────
+# Task 5A — Advice Cache
+# Returns a cached AdviceResponse if the same user+market was advised
+# within the last 30 minutes, skipping the full LLM pipeline.
+# ─────────────────────────────────────────────────────────────
+
+CACHE_WINDOW_MINUTES = 30
+
+def get_cached_advice(telegram_id: Optional[str], market_id: str) -> Optional[AdviceResponse]:
+    """
+    Looks up the most recent Conversation record for this user+market.
+    If the last assistant message was within 30 minutes and contains valid
+    advice JSON, deserialises and returns it with a staleness warning.
+    Returns None if no valid cache entry exists.
+    """
+    if not telegram_id:
+        return None
+    try:
+        window_start = datetime.now(timezone.utc) - timedelta(minutes=CACHE_WINDOW_MINUTES)
+        with Session(engine) as session:
+            conv = session.exec(
+                select(Conversation)
+                .where(Conversation.telegram_user_id == telegram_id)
+                .where(Conversation.market_id == market_id)
+                .order_by(Conversation.updated_at.desc())
+            ).first()
+            if not conv or not conv.messages:
+                return None
+            # Find the latest assistant message
+            assistant_msgs = [m for m in conv.messages if m.get("role") == "assistant"]
+            if not assistant_msgs:
+                return None
+            last = assistant_msgs[-1]
+            ts_str = last.get("ts")
+            if not ts_str:
+                return None
+            ts = datetime.fromisoformat(ts_str)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts < window_start:
+                return None  # Cache expired
+            # Parse the cached advice payload
+            payload = last.get("advice")
+            if not payload or not isinstance(payload, dict):
+                return None
+            cached = AdviceResponse(**payload)
+            age_mins = int((datetime.now(timezone.utc) - ts).total_seconds() / 60)
+            cached.stale_data_warning = (
+                f"Cached advice from {age_mins} minute(s) ago. "
+                f"Full analysis skipped to save resources."
+            )
+            print(f"[Cache] HIT for user={telegram_id} market={market_id} age={age_mins}m")
+            return cached
+    except Exception as e:
+        print(f"[Cache] Read error (non-fatal): {e}")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
+# Task 5B — Conversation History Helpers
+# Load the last 10 messages (5 exchanges) for a user+market and
+# save the latest advice turn back to the Conversation table.
+# ─────────────────────────────────────────────────────────────
+
+def load_conversation_history(telegram_id: Optional[str], market_id: str) -> list:
+    """
+    Returns the last 10 messages for this user+market as a list of
+    {role, content} dicts — the format run_synthesis() already expects.
+    Returns [] if no history exists or on any error.
+    """
+    if not telegram_id:
+        return []
+    try:
+        with Session(engine) as session:
+            conv = session.exec(
+                select(Conversation)
+                .where(Conversation.telegram_user_id == telegram_id)
+                .where(Conversation.market_id == market_id)
+                .order_by(Conversation.updated_at.desc())
+            ).first()
+            if not conv or not conv.messages:
+                return []
+            # Return last 10 messages stripped to role+content only
+            return [
+                {"role": m["role"], "content": m["content"]}
+                for m in conv.messages[-10:]
+                if "role" in m and "content" in m
+            ]
+    except Exception as e:
+        print(f"[Conversation] Load error (non-fatal): {e}")
+        return []
+
+
+def save_conversation_turn(
+    telegram_id: Optional[str],
+    market_id: str,
+    user_content: str,
+    advice: AdviceResponse,
+) -> None:
+    """
+    Appends the user query and assistant advice to the Conversation table.
+    Creates the record if it doesn't exist yet.
+    The advice object is stored in full so the cache can reconstruct it.
+    """
+    if not telegram_id:
+        return
+    try:
+        now_str = datetime.now(timezone.utc).isoformat()
+        with Session(engine) as session:
+            conv = session.exec(
+                select(Conversation)
+                .where(Conversation.telegram_user_id == telegram_id)
+                .where(Conversation.market_id == market_id)
+            ).first()
+            if conv is None:
+                conv = Conversation(
+                    telegram_user_id=telegram_id,
+                    market_id=market_id,
+                    messages=[],
+                )
+                session.add(conv)
+            messages = list(conv.messages or [])
+            messages.append({"role": "user", "content": user_content, "ts": now_str})
+            messages.append({
+                "role": "assistant",
+                "content": advice.summary,
+                "ts": now_str,
+                "advice": advice.dict(),   # full payload for cache reconstruction
+            })
+            # Keep only the last 40 messages (20 exchanges) to bound DB growth
+            conv.messages = messages[-40:]
+            conv.updated_at = datetime.utcnow()
+            session.commit()
+    except Exception as e:
+        print(f"[Conversation] Save error (non-fatal): {e}")
+
+
+# ─────────────────────────────────────────────────────────────
 # MAIN ENDPOINT
 #
 # Flow:
 #   1. Rate limit check (Task 3)
-#   2. Fetch market data + AI signal directly from Neon
-#   3. Run 3 Tavily searches in parallel (news + social + context)
-#   4. Bundle everything into one enriched prompt
-#   5. Send to the multi-agent Orchestrator
-#   6. Parse → return AdviceResponse
-#   7. Write AuditLog (Task 4)
+#   2. Check advice cache — return stale warning if hit (Task 5a)
+#   3. Fetch market data + AI signal directly from Neon
+#   4. Load conversation history sliding window (Task 5b)
+#   5. Run 3 Tavily searches in parallel (news + social + context)
+#   6. Bundle everything into one enriched prompt
+#   7. Send to the multi-agent Orchestrator
+#   8. Parse → return AdviceResponse
+#   9. Save conversation turn + Write AuditLog (Tasks 4 & 5)
 # ─────────────────────────────────────────────────────────────
 
 @router.post("/advice", response_model=AdviceResponse)
@@ -408,6 +550,11 @@ async def get_advice(request: AdviceRequest):
     # Task 3: Rate limit check — before any expensive work
     check_rate_limit(request.telegram_id)
 
+    # Policy gate — block prompt injection attempts on the market_id field
+    policy = check_policy(request.market_id)
+    if not policy["allowed"]:
+        raise HTTPException(status_code=400, detail=policy["reason"])
+
     try:
 
         if request.premium and not has_premium_access(request.telegram_id, request.market_id):
@@ -415,6 +562,12 @@ async def get_advice(request: AdviceRequest):
                 status_code=402,
                 content=payment_required_payload(request.market_id),
             )
+
+        # Task 5A: Check advice cache — skip full pipeline if recent result exists
+        cached = get_cached_advice(request.telegram_id, request.market_id)
+        if cached:
+            success = True
+            return cached
 
         # 1. Fetch directly from Neon — no localhost calls
         market_data   = fetch_market_data(request.market_id)
@@ -428,6 +581,9 @@ async def get_advice(request: AdviceRequest):
         ).strip()
 
         print(f"[Agent] Market {request.market_id}: {market_question}")
+
+        # Task 5b: Load conversation history (sliding window — last 5 exchanges)
+        history = load_conversation_history(request.telegram_id, request.market_id)
 
         # 3. Run 3 Tavily searches in parallel
         search_context = await search_prefetch(market_question)
@@ -445,6 +601,7 @@ async def get_advice(request: AdviceRequest):
             search_context=search_context,
             telegram_id=request.telegram_id,
             premium=request.premium,
+            history=history,
             language=request.language
         )
 
@@ -481,6 +638,41 @@ async def get_advice(request: AdviceRequest):
                 print(f"[Translation Error] Could not translate to Swahili: {e}")
 
         success = True
+
+        # Task 5: Save this exchange to conversation history for future context
+        save_conversation_turn(
+            telegram_id=request.telegram_id,
+            market_id=request.market_id,
+            user_content=f"/advice {request.market_id}",
+            advice=response_obj,
+        )
+
+        # ── AUTO-TRADE ENGINE ─────────────────────────────────────────────────
+        # Only fires if the user has a telegram_id (anonymous calls are skipped).
+        # AutoTradeEngine runs all safety gates internally — this call is always safe.
+        # The result is attached to the response so the dashboard / bot can display
+        # what happened (executed, blocked, confirm pending, etc.)
+        if request.telegram_id:
+            try:
+                # Build a stable idempotency key: user + market + minute-bucket
+                # This prevents double-execution if the client retries within the same minute
+                minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+                advice_id = f"{request.telegram_id}-{request.market_id}-{minute_bucket}"
+
+                auto_result = await AutoTradeEngine.execute(
+                    market_id=request.market_id,
+                    suggested_plan=response_obj.suggested_plan,
+                    confidence=response_obj.confidence,
+                    telegram_id=request.telegram_id,
+                    advice_id=advice_id,
+                )
+                response_obj.auto_trade_result = auto_result
+                print(f"[AutoTrade] {auto_result}")
+            except Exception as e:
+                # Never let auto-trade errors block the advice response
+                print(f"[AutoTrade] Engine error (non-fatal): {e}")
+                response_obj.auto_trade_result = {"executed": False, "reason": str(e), "mode": "error"}
+
         return response_obj
 
     finally:

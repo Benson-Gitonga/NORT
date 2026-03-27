@@ -7,3 +7,4 @@ tavily-python    # Tavily Search API (replaces DuckDuckGo)
 psycopg2-binary  # PostgreSQL driver for Neon
 langdetect       # Language detection for Kiswahili support (Phase Two)
 svix             # Webhook verification for Privy (whsec_ signing key)
+apscheduler      # Background scheduler for proactive market alerts (Task 7)

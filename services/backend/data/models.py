@@ -51,10 +51,9 @@ class Payment(SQLModel, table=True):
 
     user: User = Relationship(back_populates="payments")
 
-
+# 4b. TelegramProfile Table
 class TelegramProfile(SQLModel, table=True):
     __tablename__ = "telegram_profile"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_id: str = Field(index=True, unique=True)
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
@@ -82,9 +81,7 @@ class Trade(SQLModel, table=True):
 
 # 6. PaperTrade Table
 class PaperTrade(SQLModel, table=True):
-    """Stores all paper trades. No real money is ever moved."""
     __tablename__ = "paper_trades"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True)
     market_id: str
@@ -103,7 +100,6 @@ class PaperTrade(SQLModel, table=True):
 # 7. LeaderboardSnapshot Table
 class LeaderboardSnapshot(SQLModel, table=True):
     __tablename__ = "leaderboard_snapshots"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True)
     display_name: Optional[str] = None
@@ -116,7 +112,6 @@ class LeaderboardSnapshot(SQLModel, table=True):
 # 8. WalletConfig Table
 class WalletConfig(SQLModel, table=True):
     __tablename__ = "wallet_config"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True, unique=True)
     paper_balance: float = Field(default=1000.0)
@@ -129,162 +124,102 @@ class WalletConfig(SQLModel, table=True):
 
 # 9. Conversation Table
 class Conversation(SQLModel, table=True):
-    """
-    Stores the full chat history per user per market session.
-    Messages are stored as a JSONB array: [{role, content, timestamp}]
-    The orchestrator loads the last N messages as a sliding window.
-    """
     __tablename__ = "conversations"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True)
     market_id: str = Field(index=True)
-    # Stored as JSON array: [{"role": "user|assistant", "content": "...", "ts": "..."}]
     messages: list = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 # 10. UserPermission Table
 class UserPermission(SQLModel, table=True):
-    """
-    Auto-trade permission settings per user.
-    These are the HARD LIMITS the AutoTradeEngine enforces in pure Python
-    — the AI cannot override these values.
-    """
     __tablename__ = "user_permissions"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True, unique=True)
-
-    # Auto-trade master switch
     auto_trade_enabled: bool = Field(default=False)
-
-    # Trade mode: "paper" (no money moves) or "real" (live blockchain trade)
-    trade_mode: str = Field(default="paper")
-
-    # Hard bet size cap — AutoTradeEngine will NEVER exceed this even if AI says higher
-    max_bet_size: float = Field(default=10.0)   # in USDC
-
-    # Minimum confidence before AutoTradeEngine fires
-    # 0.75 for solo users, 0.80 enforced for copy-trade leaders
+    trade_mode: str = Field(default="paper")   # "paper" | "real" | "confirm"
+    max_bet_size: float = Field(default=10.0)
     min_confidence: float = Field(default=0.75)
-
-    # Language preference for advice output
-    preferred_language: str = Field(default="en")  # "en" or "sw"
-
+    preferred_language: str = Field(default="en")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-# 11. BridgeTransaction Table  ← Phase 2: LI.FI bridge state tracking
+# 11. BridgeTransaction Table
 class BridgeTransaction(SQLModel, table=True):
-    """
-    Tracks every LI.FI bridge request from Base → Polygon (and back).
-
-    Lifecycle:
-      pending   → bridge tx submitted to Base
-      bridging  → tx confirmed on Base, waiting for Polygon arrival
-      done      → USDC arrived on Polygon, ready to trade
-      failed    → bridge timed out or reverted
-      refunded  → LI.FI issued a refund back to Base
-    """
     __tablename__ = "bridge_transactions"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    telegram_user_id: str = Field(index=True)
-    wallet_address: str                          # Base wallet that initiated
-
-    # Amounts
-    amount_usdc: float                           # USDC being bridged
-    from_chain: str = Field(default="BASE")      # always BASE for now
-    to_chain: str = Field(default="POL")         # always Polygon for now
-
-    # LI.FI tracking
-    lifi_tx_hash: Optional[str] = None           # tx hash on Base (sending side)
-    lifi_receiving_tx_hash: Optional[str] = None # tx hash on Polygon (receiving side)
-    lifi_tool: Optional[str] = None              # bridge tool used (e.g. "stargate")
-
-    # Status
-    status: str = Field(default="pending")       # pending|bridging|done|failed|refunded
-    error_message: Optional[str] = None
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = None
-
-    # Link to the real trade that triggered this bridge (optional)
-    real_trade_id: Optional[int] = None
-
-# 12. RealTrade Table  ← Phase 2: real on-chain trade history
-class RealTrade(SQLModel, table=True):
-    """
-    Stores real on-chain trades on Polymarket (Polygon).
-    Separate from PaperTrade so paper history is never contaminated.
-
-    status: pending_bridge → bridging → pending_execution → open → closed → failed
-    """
-    __tablename__ = "real_trades"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     telegram_user_id: str = Field(index=True)
     wallet_address: str
+    amount_usdc: float
+    from_chain: str = Field(default="BASE")
+    to_chain: str = Field(default="POL")
+    lifi_tx_hash: Optional[str] = None
+    lifi_receiving_tx_hash: Optional[str] = None
+    lifi_tool: Optional[str] = None
+    status: str = Field(default="pending")
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    real_trade_id: Optional[int] = None
 
-    # Market info
+# 12. RealTrade Table
+class RealTrade(SQLModel, table=True):
+    __tablename__ = "real_trades"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    wallet_address: str
     market_id: str
     market_question: str
-    outcome: str                                 # YES or NO
+    outcome: str
     shares: float
-    price_per_share: float                       # price at execution
+    price_per_share: float
     total_cost_usdc: float
-
-    # Bridge
-    bridge_tx_id: Optional[int] = None          # FK to BridgeTransaction
+    bridge_tx_id: Optional[int] = None
     bridged_amount_usdc: float = Field(default=0.0)
-
-    # On-chain execution
-    polymarket_order_id: Optional[str] = None   # Polymarket CLOB order ID
-    polygon_tx_hash: Optional[str] = None       # tx hash on Polygon
-
-    # Result
+    polymarket_order_id: Optional[str] = None
+    polygon_tx_hash: Optional[str] = None
     status: str = Field(default="pending_bridge")
     pnl: Optional[float] = None
     settled_at: Optional[datetime] = None
     error_message: Optional[str] = None
-
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 # 13. AuditLog Table  ← Task 4: request audit trail + rate limiting + feedback loop
 class AuditLog(SQLModel, table=True):
-    """
-    Records every call to the /agent/advice endpoint.
-
-    Powers:
-      - Rate limiting (Task 3): count rows per user in last hour
-      - Feedback loop (Task 6): outcome_correct updated when trade closes
-      - Dashboard logs page: full activity trail per user
-      - Abuse detection: flag users who spam the endpoint
-    """
     __tablename__ = "audit_logs"
-
     id: Optional[int] = Field(default=None, primary_key=True)
-
-    # Who called it
     telegram_user_id: Optional[str] = Field(default=None, index=True)
-
-    # What they called
-    action: str = Field(default="advice")           # e.g. "advice", "debug"
+    action: str = Field(default="advice")
     market_id: Optional[str] = Field(default=None)
-
-    # Tier
     premium: bool = Field(default=False)
-
-    # Result
     success: bool = Field(default=True)
-    response_time_ms: Optional[int] = Field(default=None)   # wall-clock ms for the full pipeline
-
-    # Feedback loop (Task 6): set when the corresponding trade closes
-    outcome_correct: Optional[bool] = Field(default=None)   # True=win, False=loss, None=pending/no trade
-
-    # Timestamp
+    response_time_ms: Optional[int] = Field(default=None)
+    outcome_correct: Optional[bool] = Field(default=None)   # Task 6: set on trade close
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+# 14. PendingTrade Table  ← Task 11: confirmation flow for trade_mode="confirm"
+class PendingTrade(SQLModel, table=True):
+    __tablename__ = "pending_trades"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    market_id: str
+    market_question: str
+    suggested_plan: str       # "BUY YES" | "BUY NO"
+    confidence: float
+    amount_usdc: float
+    status: str = Field(default="pending")   # pending|confirmed|cancelled|expired
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime                     # 10 min from created_at
+    confirmed_at: Optional[datetime] = None
+
+# 15. AlertHistory Table  ← Task 7: prevents duplicate proactive alerts
+class AlertHistory(SQLModel, table=True):
+    __tablename__ = "alert_history"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    market_id: str = Field(index=True)
+    score: float
+    sent_at: datetime = Field(default_factory=datetime.utcnow)

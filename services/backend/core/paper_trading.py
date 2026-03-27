@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Optional
 from sqlmodel import Session, select
 
-from services.backend.data.models import User, WalletConfig, PaperTrade, Market
+from services.backend.data.models import User, WalletConfig, PaperTrade, Market, AuditLog
 
 
 # ─── TRADING MODE ROUTER ─────────────────────────────────────────────────────
@@ -173,6 +173,36 @@ def place_paper_trade(telegram_user_id, market_id, market_question, outcome,
     return trade
 
 
+# ─── TASK 6: FEEDBACK LOOP HELPER ───────────────────────────────────────────
+
+def _write_feedback_to_audit_log(
+    telegram_user_id: str,
+    market_id: str,
+    outcome_correct: bool,
+    session: Session,
+) -> None:
+    """
+    When a trade closes, find the most recent AuditLog entry for this
+    user + market and set outcome_correct so the agent can self-calibrate.
+    Never raises — errors are swallowed so trade closure is never blocked.
+    """
+    try:
+        log = session.exec(
+            select(AuditLog)
+            .where(AuditLog.telegram_user_id == telegram_user_id)
+            .where(AuditLog.market_id == market_id)
+            .where(AuditLog.action == "advice")
+            .order_by(AuditLog.created_at.desc())
+        ).first()
+        if log and log.outcome_correct is None:
+            log.outcome_correct = outcome_correct
+            session.add(log)
+            # commit is handled by the caller
+            print(f"[Feedback] AuditLog id={log.id} outcome_correct={outcome_correct}")
+    except Exception as e:
+        print(f"[Feedback] Write failed (non-fatal): {e}")
+
+
 # ─── SELL A POSITION ─────────────────────────────────────────────────────────
 
 def sell_trade(trade_id, session):
@@ -205,6 +235,14 @@ def sell_trade(trade_id, session):
         config.paper_balance = round(config.paper_balance + payout, 6)
         config.updated_at    = datetime.utcnow()
         session.add(config)
+
+    # Task 6: Feedback loop — mark the originating advice as correct/incorrect
+    _write_feedback_to_audit_log(
+        telegram_user_id=trade.telegram_user_id,
+        market_id=trade.market_id,
+        outcome_correct=(pnl > 0),
+        session=session,
+    )
 
     session.commit()
 
@@ -326,6 +364,14 @@ def settle_trade(trade_id, session):
         config.paper_balance = round(config.paper_balance + payout, 6)
         config.updated_at    = datetime.utcnow()
         session.add(config)
+
+    # Task 6: Feedback loop — mark the originating advice as correct/incorrect
+    _write_feedback_to_audit_log(
+        telegram_user_id=trade.telegram_user_id,
+        market_id=trade.market_id,
+        outcome_correct=(pnl > 0),
+        session=session,
+    )
 
     session.commit()
 

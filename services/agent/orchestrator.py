@@ -42,6 +42,59 @@ def _make_headers(api_key: str) -> dict:
 OPENROUTER_HEADERS = _make_headers(OPENROUTER_API_KEY)
 
 # ─────────────────────────────────────────────────────────────
+# TASK 6: PERFORMANCE SUMMARY HELPER
+# Reads the last 10 AuditLog entries for this user where
+# outcome_correct is not None, and builds a calibration note
+# injected into the SynthesisAgent prompt.
+# ─────────────────────────────────────────────────────────────
+
+def _build_performance_summary(telegram_id: Optional[str]) -> Optional[str]:
+    """
+    Returns a one-paragraph performance note for the SynthesisAgent,
+    e.g. "Your last 10 advice calls were 7 correct (70% accuracy)..."
+    Returns None if there is no feedback data yet.
+    """
+    if not telegram_id:
+        return None
+    try:
+        from sqlmodel import Session, select
+        from services.backend.data.database import engine
+        from services.backend.data.models import AuditLog
+
+        with Session(engine) as session:
+            logs = session.exec(
+                select(AuditLog)
+                .where(AuditLog.telegram_user_id == telegram_id)
+                .where(AuditLog.action == "advice")
+                .where(AuditLog.outcome_correct != None)  # noqa: E711
+                .order_by(AuditLog.created_at.desc())
+                .limit(10)
+            ).all()
+
+        if not logs:
+            return None
+
+        correct = sum(1 for l in logs if l.outcome_correct is True)
+        total   = len(logs)
+        pct     = round((correct / total) * 100)
+
+        trend = ""
+        if pct < 50:
+            trend = " You have been underperforming recently — consider raising your confidence threshold."
+        elif pct >= 80:
+            trend = " Your recent accuracy is strong — maintain your current approach."
+
+        return (
+            f"PERFORMANCE NOTE: Your last {total} advice calls for this user were "
+            f"{correct} correct ({pct}% accuracy).{trend} "
+            f"Adjust your confidence score accordingly — do not blindly output 0.85+ "
+            f"if your recent track record does not support it."
+        )
+    except Exception as e:
+        print(f"[PerformanceSummary] Failed (non-fatal): {e}")
+        return None
+
+# ─────────────────────────────────────────────────────────────
 # SUB-AGENT 1: TechnicalAgent (Pure Python — No LLM Cost)
 # ─────────────────────────────────────────────────────────────
 
@@ -228,6 +281,7 @@ async def run_synthesis(
     history: list,
     premium: bool,
     language: str = "en",
+    telegram_id: Optional[str] = None,
 ) -> str:
     """
     Receives structured reports from 3 sub-agents.
@@ -252,6 +306,10 @@ async def run_synthesis(
         )
 
     lang_instruction = "Respond entirely in English. Do NOT translate JSON keys."
+
+    # Task 6: inject performance summary so the agent can self-calibrate
+    performance_note = _build_performance_summary(telegram_id)
+    perf_section = f"\n━━━ PERFORMANCE HISTORY ━━━\n{performance_note}\n" if performance_note else ""
 
     user_message = f"""/advice {market_id}
 
@@ -287,7 +345,7 @@ Max Safe Bet:      ${risk.get('safe_bet_usdc', 'N/A')} USDC
 <social>
 {search_context.get('social', 'No social data.')[:800]}
 </social>
-
+{perf_section}
 ━━━ YOUR TASK ━━━
 Using ALL data above, provide a comprehensive analysis.
 The safe_bet_usdc from RiskAgent MUST be reflected in your suggested position size.
@@ -385,6 +443,7 @@ async def run_orchestrator(
         history=history,
         premium=premium,
         language=language,
+        telegram_id=telegram_id,
     )
 
     print(f"[Orchestrator] SynthesisAgent complete.")
