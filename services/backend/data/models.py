@@ -51,6 +51,21 @@ class Payment(SQLModel, table=True):
 
     user: User = Relationship(back_populates="payments")
 
+
+class TelegramProfile(SQLModel, table=True):
+    __tablename__ = "telegram_profile"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_id: str = Field(index=True, unique=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    username: Optional[str] = None
+    preferred_language: str = Field(default="en")
+    pending_premium_market_id: Optional[str] = None
+    auto_trade_enabled: bool = Field(default=False)
+    auto_trade_limit: Optional[float] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
 # 5. Trade Table
 class Trade(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

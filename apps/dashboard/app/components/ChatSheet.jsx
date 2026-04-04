@@ -34,6 +34,9 @@ export default function ChatSheet({ signal, onClose }) {
     setMessages(prev => [...prev, { id: Date.now(), role, text }]);
   };
 
+  const formatAdvice = (resp) =>
+    `${resp.summary}\n\n${resp.why}\n\nRisks: ${resp.risks.join(', ')}\n\nPlan: ${resp.plan}`;
+
   const send = async () => {
     const q = input.trim();
     if (!q || thinking) return;
@@ -42,9 +45,8 @@ export default function ChatSheet({ signal, onClose }) {
     addMsg('user', q);
     setThinking(true);
     try {
-      const resp = await getAdvice(signal?.id, q);
-      const text = `${resp.summary}\n\n${resp.why}\n\nRisks: ${resp.risks.join(', ')}\n\nPlan: ${resp.plan}`;
-      addMsg('ai', text);
+      const resp = signal?.locked ? await getPremiumAdvice(signal?.id) : await getAdvice(signal?.id, q);
+      addMsg('ai', formatAdvice(resp));
     } catch {
       addMsg('ai', 'Something went wrong. Try again.');
     } finally {
@@ -58,11 +60,13 @@ export default function ChatSheet({ signal, onClose }) {
     haptic.medium();
     setPayLoading(true);
     try {
-      const result = await verifyPayment(proof);
+      const result = await verifyPayment(proof, signal?.id);
       if (result.valid) {
         haptic.success();
         setGated(false);
-        addMsg('ai', 'Payment confirmed. Premium advice unlocked. Ask me anything.');
+        const premium = await getPremiumAdvice(signal?.id);
+        addMsg('ai', 'Payment confirmed. Premium advice unlocked.');
+        addMsg('ai', formatAdvice(premium));
       } else {
         haptic.error();
         addMsg('ai', `Payment invalid: ${result.error}`);

@@ -363,8 +363,67 @@ def get_wallet_summary(session, wallet_address=None, telegram_user_id=None):
     if not telegram_user_id:
         raise ValueError("Could not resolve a telegram_user_id.")
 
-    settle_all_open_trades(telegram_user_id, session)
     config = _ensure_wallet_config(telegram_user_id, session)
+    mode   = getattr(config, 'trading_mode', 'paper')
+
+    # ── Real mode: read from RealTrade table ─────────────────────────────────
+    if mode == "real":
+        from services.backend.data.models import RealTrade
+        raw_trades    = session.exec(
+            select(RealTrade)
+            .where(RealTrade.telegram_user_id == str(telegram_user_id))
+            .order_by(RealTrade.created_at.desc())
+        ).all()
+        open_trades   = [t for t in raw_trades if t.status not in ("closed", "failed")]
+        closed_trades = [t for t in raw_trades if t.status == "closed"]
+        wins          = [t for t in closed_trades if (t.pnl or 0) > 0]
+        losses        = [t for t in closed_trades if (t.pnl or 0) < 0]
+        open_cost     = round(sum(t.total_cost_usdc for t in open_trades), 2)
+        balance       = round(config.real_balance_usdc, 2)
+        total_val     = round(balance + open_cost, 2)
+        deposited     = 1000.0
+        net_pnl       = round(total_val - deposited, 2)
+        net_pnl_pct   = round((net_pnl / deposited) * 100, 2) if deposited else 0
+        win_rate      = round((len(wins) / len(closed_trades)) * 100, 1) if closed_trades else 0.0
+
+        def _real_trade_dict(t):
+            return {
+                "id": t.id, "market_id": t.market_id,
+                "market_question": t.market_question,
+                "outcome": t.outcome, "direction": "BUY",
+                "shares": t.shares, "price_per_share": t.price_per_share,
+                "total_cost": t.total_cost_usdc,
+                "status": t.status.upper() if t.status else "OPEN",
+                "result": "WIN" if (t.pnl or 0) > 0 else "LOSS" if (t.pnl or 0) < 0 else "OPEN",
+                "current_price": None, "current_value": None, "unrealized_pnl": None,
+                "pnl": t.pnl, "pnl_display": _fmt_pnl(t.pnl),
+                "tx_hash": t.polygon_tx_hash,
+                "closed_at": t.settled_at.isoformat() if t.settled_at else None,
+                "created_at": t.created_at.isoformat(),
+            }
+
+        return {
+            "wallet_address":        wallet_address,
+            "telegram_user_id":      telegram_user_id,
+            "trading_mode":          "real",
+            "paper_balance":         round(config.paper_balance, 2),
+            "real_balance_usdc":     balance,
+            "open_positions_cost":   open_cost,
+            "total_portfolio_value": total_val,
+            "net_pnl":               net_pnl,
+            "net_pnl_pct":           net_pnl_pct,
+            "total_trades":          len(raw_trades),
+            "open_trades_count":     len(open_trades),
+            "closed_trades_count":   len(closed_trades),
+            "wins":                  len(wins),
+            "losses":                len(losses),
+            "win_rate_pct":          win_rate,
+            "trades":                [_real_trade_dict(t) for t in raw_trades],
+        }
+
+    # ── Paper mode (original behaviour) ──────────────────────────────────────
+    settle_all_open_trades(telegram_user_id, session)
+    config = _ensure_wallet_config(telegram_user_id, session)  # re-fetch after settle
 
     trades = session.exec(
         select(PaperTrade)

@@ -190,8 +190,9 @@ export default function BetsPage() {
 
   const openTrades   = trades.filter(t => t.status === 'open');
   const closedTrades = trades.filter(t => t.status === 'closed');
-  const wins         = closedTrades.filter(t => (t.pnl || 0) > 0);
-  const losses       = closedTrades.filter(t => (t.pnl || 0) < 0);
+  // Use counts from wallet summary (already mode-aware from backend)
+  const wins   = wallet?.wins   ?? closedTrades.filter(t => (t.pnl || 0) > 0).length;
+  const losses = wallet?.losses ?? closedTrades.filter(t => (t.pnl || 0) < 0).length;
 
   const resultBadge = (t) => {
     if (t.result === 'WIN')        return <span className="result-badge win">WIN</span>;
@@ -236,9 +237,9 @@ export default function BetsPage() {
             <div className="stat-card">
               <span className="stat-label">W / L</span>
               <span className="stat-val">
-                <span style={{ color: 'var(--green)' }}>{wins.length}</span>
+                <span style={{ color: 'var(--green)' }}>{wins}</span>
                 {' / '}
-                <span style={{ color: 'var(--red)' }}>{losses.length}</span>
+                <span style={{ color: 'var(--red)' }}>{losses}</span>
               </span>
             </div>
           </div>
@@ -309,9 +310,9 @@ export default function BetsPage() {
                   <div className="sec-lbl fu d3">
                     <span className="sec-t">Closed Trades</span>
                     <span className="sec-t">
-                      <span style={{ color: 'var(--green)' }}>{wins.length}W</span>
+                      <span style={{ color: 'var(--green)' }}>{wins}W</span>
                       {' · '}
-                      <span style={{ color: 'var(--red)' }}>{losses.length}L</span>
+                      <span style={{ color: 'var(--red)' }}>{losses}L</span>
                     </span>
                   </div>
                   {closedTrades.map((t, i) => (
