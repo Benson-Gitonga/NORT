@@ -26,6 +26,7 @@ from services.backend.core.paper_trading import (
     _ensure_wallet_config,
     get_user_by_wallet,
 )
+from services.backend.api.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ def get_mode(
     wallet_address: Optional[str] = None,
     telegram_user_id: Optional[str] = None,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     GET /wallet/mode
@@ -82,6 +84,7 @@ def get_mode(
 def set_mode(
     request: ModeToggleRequest,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     POST /wallet/mode
@@ -96,6 +99,11 @@ def set_mode(
       Always instant. confirmed not required.
     """
     config = _resolve_config(request.wallet_address, request.telegram_user_id, session)
+    
+    # Enforce ownership mapping against token
+    target_wallet = config.telegram_user_id.lower()
+    if target_wallet != current_user["wallet"].lower():
+        raise HTTPException(status_code=403, detail="Cannot modify modes for other users' wallets")
 
     requested_mode = request.mode.lower().strip()
     if requested_mode not in ("paper", "real"):

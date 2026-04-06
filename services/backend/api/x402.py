@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from services.backend.core.x402_verifier import verify_x402_payment
+from services.backend.api.auth import get_current_user
 
 router = APIRouter(prefix="/x402", tags=["x402"])
 
@@ -15,8 +16,14 @@ class VerifyPaymentRequest(BaseModel):
 
 
 @router.post("/verify")
-async def verify_payment(request: VerifyPaymentRequest):
+async def verify_payment(request: VerifyPaymentRequest, current_user: dict = Depends(get_current_user)):
     telegram_id = request.telegram_id or request.user_id or request.wallet_address
+    
+    # Optional strict ownership validation:
+    if current_user["wallet"].lower() != (telegram_id or "").lower():
+        # Usually backend prefers the authoritative token wallet over requested param
+        telegram_id = current_user["wallet"]
+    
     return verify_x402_payment(
         proof=request.proof,
         telegram_id=telegram_id or "",

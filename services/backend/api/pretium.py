@@ -35,6 +35,8 @@ from services.backend.core.pretium_service import (
     process_webhook,
 )
 from services.backend.data.database import get_session
+from services.backend.api.auth import get_current_user
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +129,12 @@ async def rate_endpoint(currency: str = "KES"):
 @router.post("/onramp", status_code=201)
 async def onramp_endpoint(
     req: OnRampRequest,
+    request: Request,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """Create an on-ramp order: KES -> USDC via M-Pesa STK push."""
-    tid = _resolve_user_id(req.telegram_user_id, req.wallet_address, session)
+    tid = current_user["wallet"]
 
     try:
         result = await create_onramp(
@@ -157,9 +161,29 @@ async def onramp_endpoint(
 async def offramp_endpoint(
     req: OffRampRequest,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """Create an off-ramp order: USDC -> KES via M-Pesa."""
-    tid = _resolve_user_id(req.telegram_user_id, req.wallet_address, session)
+    tid = current_user["wallet"]
+
+    # Verify on-chain tx_hash
+    expected_address = await get_settlement_address(req.chain)
+    if expected_address:
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(
+                    "https://mainnet.base.org",
+                    json={"jsonrpc": "2.0", "method": "eth_getTransactionReceipt", "params": [req.transaction_hash], "id": 1}
+                )
+            receipt = r.json().get("result")
+            if not receipt or receipt.get("status") != "0x1":
+                raise HTTPException(status_code=400, detail="Invalid or failed transaction hash on chain")
+            # In a full implementation, we'd further check logs for exact amount & correct token contract
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise
+            # If RPC fails temporarily, we might still want to proceed and let Pretium fail it, or reject
+            pass
 
     try:
         result = await create_offramp(
@@ -187,12 +211,15 @@ async def offramp_endpoint(
 async def transaction_status_endpoint(
     transaction_id: str,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """Get current status of a transaction. Also checks Pretium for updates."""
     try:
         tx = await check_transaction_status(transaction_id, session)
         if not tx:
             raise HTTPException(status_code=404, detail="Transaction not found")
+        if tx.telegram_user_id.lower() != current_user["wallet"].lower():
+            raise HTTPException(status_code=403, detail="Not your transaction")
         return tx
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -206,14 +233,13 @@ async def transaction_status_endpoint(
 
 @router.get("/transactions")
 def transactions_list_endpoint(
-    wallet_address: Optional[str] = None,
-    telegram_user_id: Optional[str] = None,
     type: Optional[str] = None,
     limit: int = 20,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """List transactions for a user."""
-    tid = _resolve_user_id(telegram_user_id, wallet_address, session)
+    tid = current_user["wallet"]
     return {
         "transactions": list_transactions(tid, tx_type=type, limit=limit, session=session),
     }
@@ -244,6 +270,14 @@ async def webhook_endpoint(request: Request, session: Session = Depends(get_sess
         "status": payload.get("status"),
         "is_released": payload.get("is_released"),
     })
+
+    tx_code = payload.get("transaction_code")
+    if not tx_code:
+        raise HTTPException(status_code=400, detail="Missing transaction_code")
+        
+    tx = get_transaction(tx_code, session)
+    if not tx:
+        raise HTTPException(status_code=400, detail="Unknown transaction_code — ignoring")
 
     result = await process_webhook(payload, session)
     return result

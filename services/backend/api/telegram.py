@@ -12,6 +12,7 @@ from services.backend.core.telegram_users import (
     upsert_telegram_profile,
 )
 from services.backend.data.database import get_session
+from services.backend.api.auth import get_current_user
 
 router = APIRouter(tags=["Telegram"])
 
@@ -59,6 +60,7 @@ def telegram_user_upsert(
 def telegram_user_get(
     telegram_id: str,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     profile = get_telegram_profile(session, telegram_id)
     if not profile:
@@ -70,6 +72,7 @@ def telegram_user_get(
 def telegram_set_language(
     request: LanguagePreferenceRequest,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     try:
         profile = set_language(session, request.telegram_id, request.language)
@@ -82,6 +85,7 @@ def telegram_set_language(
 def telegram_set_pending_premium(
     request: PendingPremiumRequest,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     try:
         profile = set_pending_premium_market(session, request.telegram_id, request.market_id)
@@ -94,6 +98,7 @@ def telegram_set_pending_premium(
 def telegram_get_permissions(
     telegram_id: str,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     profile = get_telegram_profile(session, telegram_id)
     if not profile:
@@ -109,6 +114,7 @@ def telegram_get_permissions(
 def permissions_update(
     request: PermissionsRequest,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     try:
         profile = update_permissions(

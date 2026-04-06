@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const authToken = request.cookies.get('privy-token');
 
@@ -11,10 +11,16 @@ export function middleware(request: NextRequest) {
       return NextResponse.rewrite(new URL('https://nort-landing-nine.vercel.app', request.url));
     }
   }
-  // Allow access to /login and /dashboard for all
+  // Allow access to /login and /dashboard for all, but redirect if unauth on others except public endpoints
+  const publicPaths = ['/', '/login'];
+  if (!authToken && !publicPaths.includes(pathname)) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/', '/login', '/dashboard/:path*'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|$).*)',
+  ],
 };

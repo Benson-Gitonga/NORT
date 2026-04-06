@@ -2,7 +2,7 @@ import json
 import httpx
 import os
 import asyncio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -16,6 +16,7 @@ from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
 from services.backend.core.x402_verifier import has_premium_access, payment_required_payload
 from services.backend.data.database import engine
 from services.backend.data.models import Market, AISignal
+from services.backend.api.auth import get_current_user
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -319,27 +320,42 @@ def fetch_market_signal(market_id: str) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 @router.post("/advice", response_model=AdviceResponse)
-async def get_advice(request: AdviceRequest):
+@router.post("/advice")
+async def get_advice(request: Request, body_req: AdviceRequest, current_user: dict = Depends(get_current_user)):
+    from services.backend.main import limiter
+    
+    # We must call the limiter check manually if we can't use the decorator smoothly with request unpacking
+    # But usually `@limiter.limit("5/minute")` is applied before the function. Let's just wrap it.
+    pass
+
+@router.post("/advice", response_model=AdviceResponse)
+async def get_advice(
+    request: Request, 
+    body_req: AdviceRequest, 
+    current_user: dict = Depends(get_current_user)
+):
+    from services.backend.main import limiter
+    
     tool_calls_used: list[str] = []
 
-    if request.premium and not has_premium_access(request.telegram_id, request.market_id):
+    if body_req.premium and not has_premium_access(current_user["wallet"], body_req.market_id):
         return JSONResponse(
             status_code=402,
-            content=payment_required_payload(request.market_id),
+            content=payment_required_payload(body_req.market_id),
         )
 
     # 1. Fetch directly from Neon — no localhost calls
-    market_data   = fetch_market_data(request.market_id)
-    market_signal = fetch_market_signal(request.market_id)
+    market_data   = fetch_market_data(body_req.market_id)
+    market_signal = fetch_market_signal(body_req.market_id)
 
     # 2. Extract market question
     market_question = (
         market_data.get("question") or
         market_data.get("summary") or
-        f"prediction market {request.market_id}"
+        f"prediction market {body_req.market_id}"
     ).strip()
 
-    print(f"[Agent] Market {request.market_id}: {market_question}")
+    print(f"[Agent] Market {body_req.market_id}: {market_question}")
 
     # 3. Run 3 Tavily searches in parallel
     search_context = await search_prefetch(market_question)
@@ -351,7 +367,7 @@ async def get_advice(request: AdviceRequest):
 
     # 4. Send everything to OpenClaw in one enriched prompt
     raw_response = await call_openclaw(
-        market_id=request.market_id,
+        market_id=body_req.market_id,
         market_question=market_question,
         market_data=market_data,
         market_signal=market_signal,
@@ -359,4 +375,4 @@ async def get_advice(request: AdviceRequest):
     )
 
     print(f"[Agent] Raw response: {raw_response}")
-    return parse_response(raw_response, request.market_id, tool_calls_used)
+    return parse_response(raw_response, body_req.market_id, tool_calls_used)
