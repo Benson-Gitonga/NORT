@@ -2,10 +2,7 @@ import json
 import httpx
 import os
 import asyncio
-import time
-import re
-from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -22,7 +19,8 @@ from services.agent.policies import check_policy
 from services.agent.executor import AutoTradeEngine
 from services.backend.core.x402_verifier import has_premium_access, has_any_confirmed_payment, payment_required_payload
 from services.backend.data.database import engine
-from services.backend.data.models import Market, AISignal, AuditLog, Conversation
+from services.backend.data.models import Market, AISignal
+from services.backend.api.auth import get_current_user
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -643,88 +641,43 @@ def save_conversation_turn(
 #   9. Save conversation turn + Write AuditLog (Tasks 4 & 5)
 # ─────────────────────────────────────────────────────────────
 
-@router.get("/advice/history/{market_id}")
-def get_advice_history(market_id: str, wallet_address: str):
-    """
-    Returns the stored conversation messages for a given user+market pair.
-    Used by the frontend ChatSheet to pre-populate chat history on open.
-    """
-    if not wallet_address:
-        raise HTTPException(status_code=400, detail="wallet_address query param required")
-    try:
-        with Session(engine) as session:
-            conv = session.exec(
-                select(Conversation)
-                .where(Conversation.telegram_user_id == wallet_address)
-                .where(Conversation.market_id == market_id)
-                .order_by(Conversation.updated_at.desc())
-            ).first()
-        if not conv or not conv.messages:
-            return {"market_id": market_id, "messages": []}
-        # Return the last 20 messages with role, content, and parsed advice payload
-        messages = [
-            {
-                "role": m["role"], 
-                "content": m["content"],
-                "advice": m.get("advice")
-            }
-            for m in conv.messages[-20:]
-            if "role" in m and "content" in m
-        ]
-        return {"market_id": market_id, "messages": messages}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"History fetch error: {e}")
+@router.post("/advice", response_model=AdviceResponse)
+@router.post("/advice")
+async def get_advice(request: Request, body_req: AdviceRequest, current_user: dict = Depends(get_current_user)):
+    from services.backend.main import limiter
+    
+    # We must call the limiter check manually if we can't use the decorator smoothly with request unpacking
+    # But usually `@limiter.limit("5/minute")` is applied before the function. Let's just wrap it.
+    pass
 
-
-
-async def get_advice(request: AdviceRequest):
+@router.post("/advice", response_model=AdviceResponse)
+async def get_advice(
+    request: Request, 
+    body_req: AdviceRequest, 
+    current_user: dict = Depends(get_current_user)
+):
+    from services.backend.main import limiter
+    
     tool_calls_used: list[str] = []
-    start_time = time.monotonic()
-    success = False
 
-    # telegram_id carries wallet_address for dashboard users, actual telegram ID for bot users
-    effective_user_id = request.telegram_id
-
-    # Task 3: Rate limit check — before any expensive work
-    check_rate_limit(effective_user_id, request.premium)
-
-    # Policy gate — block prompt injection attempts on the market_id field
-    policy = check_policy(request.market_id)
-    if not policy["allowed"]:
-        raise HTTPException(status_code=400, detail=policy["reason"])
-
-    try:
-
-        if request.premium and not has_premium_access(effective_user_id, request.market_id):
-            return JSONResponse(
-                status_code=402,
-                content=payment_required_payload(request.market_id),
-            )
-
-        # Skip cache for premium flows and for fresh user questions.
-        # Otherwise users keep seeing the same answer even after typing a new request.
-        allow_cache = (not request.premium) and (not request.user_message)
-
-        # Task 5A: Check advice cache
-        cached = get_cached_advice(
-            effective_user_id,
-            request.market_id,
-            allow_cache=allow_cache,
+    if body_req.premium and not has_premium_access(current_user["wallet"], body_req.market_id):
+        return JSONResponse(
+            status_code=402,
+            content=payment_required_payload(body_req.market_id),
         )
-        if cached:
-            success = True
-            return cached
 
-        market_data   = fetch_market_data(request.market_id)
-        market_signal = fetch_market_signal(request.market_id)
+    # 1. Fetch directly from Neon — no localhost calls
+    market_data   = fetch_market_data(body_req.market_id)
+    market_signal = fetch_market_signal(body_req.market_id)
 
-        market_question = (
-            market_data.get("question") or
-            market_data.get("summary") or
-            f"prediction market {request.market_id}"
-        ).strip()
+    # 2. Extract market question
+    market_question = (
+        market_data.get("question") or
+        market_data.get("summary") or
+        f"prediction market {body_req.market_id}"
+    ).strip()
 
-        print(f"[Agent] Market {request.market_id}: {market_question}")
+    print(f"[Agent] Market {body_req.market_id}: {market_question}")
 
         # Premium users get prior conversation context.
         # Free users do not get memory, but the current question should still shape this analysis.
@@ -739,85 +692,14 @@ async def get_advice(request: AdviceRequest):
             f"tavily_context: {search_context['queries']['context']}"
         ]
 
-        raw_response, technical_result, sentiment_result = await run_orchestrator(
-            market_id=request.market_id,
-            market_data=market_data,
-            market_signal=market_signal,
-            search_context=search_context,
-            telegram_id=effective_user_id,
-            premium=request.premium,
-            history=history,
-            language=request.language
-        )
+    # 4. Send everything to OpenClaw in one enriched prompt
+    raw_response = await call_openclaw(
+        market_id=body_req.market_id,
+        market_question=market_question,
+        market_data=market_data,
+        market_signal=market_signal,
+        search_context=search_context
+    )
 
-        # 5. Parse → return AdviceResponse (Task 8B: pass agent results for confidence cap)
-        response_obj = parse_response(
-            raw_response,
-            request.market_id,
-            tool_calls_used,
-            technical_momentum=technical_result.get("momentum", "NEUTRAL"),
-            sentiment_label=sentiment_result.get("label", "Neutral"),
-        )
-
-        # Translation is a PREMIUM-only feature. Free users always get English.
-        if request.premium and request.language == "sw":
-            translator = GoogleTranslator(source='en', target='sw')
-            try:
-                response_obj.summary = translator.translate(response_obj.summary)
-                response_obj.why_trending = translator.translate(response_obj.why_trending)
-                response_obj.risk_factors = [translator.translate(rf) for rf in response_obj.risk_factors]
-                response_obj.disclaimer = translator.translate(response_obj.disclaimer)
-                if response_obj.stale_data_warning:
-                    response_obj.stale_data_warning = translator.translate(response_obj.stale_data_warning)
-
-                # Manually map the ENUM to ensure reliable translation
-                plan_map = {
-                    "BUY YES": "NUNUA NDIYO",
-                    "BUY NO": "NUNUA HAPANA",
-                    "WAIT": "SUBIRI"
-                }
-                if response_obj.suggested_plan in plan_map:
-                    response_obj.suggested_plan = plan_map[response_obj.suggested_plan]
-
-            except Exception as e:
-                print(f"[Translation Error] Could not translate to Swahili: {e}")
-
-        success = True
-
-        # Task 5: Save this exchange to conversation history for future context
-        save_conversation_turn(
-            user_id=effective_user_id,
-            market_id=request.market_id,
-            user_content=request.user_message or f"/advice {request.market_id}",
-            advice=response_obj,
-        )
-
-        # AUTO-TRADE ENGINE — fires for any identified user (wallet or telegram)
-        if effective_user_id:
-            try:
-                minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
-                advice_id = f"{effective_user_id}-{request.market_id}-{minute_bucket}"
-                auto_result = await AutoTradeEngine.execute(
-                    market_id=request.market_id,
-                    suggested_plan=response_obj.suggested_plan,
-                    confidence=response_obj.confidence,
-                    telegram_id=effective_user_id,
-                    advice_id=advice_id,
-                )
-                response_obj.auto_trade_result = auto_result
-                print(f"[AutoTrade] {auto_result}")
-            except Exception as e:
-                print(f"[AutoTrade] Engine error (non-fatal): {e}")
-                response_obj.auto_trade_result = {"executed": False, "reason": str(e), "mode": "error"}
-
-        return response_obj
-
-    finally:
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        write_audit_log(
-            telegram_id=effective_user_id,
-            market_id=request.market_id,
-            premium=request.premium,
-            success=success,
-            response_time_ms=elapsed_ms,
-        )
+    print(f"[Agent] Raw response: {raw_response}")
+    return parse_response(raw_response, body_req.market_id, tool_calls_used)

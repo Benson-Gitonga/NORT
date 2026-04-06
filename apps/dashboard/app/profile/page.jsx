@@ -5,9 +5,8 @@ import { useTelegram } from '@/hooks/useTelegram';
 import { useTradingMode } from '@/components/TradingModeContext';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
-import PremiumGate from '@/components/PremiumGate';
-import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPermissions, setPermissions, BASE } from '@/lib/api';
-import { useTier } from '@/hooks/useTier';
+import Link from 'next/link';
+import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE } from '@/lib/api';
 
 export default function ProfilePage() {
   const { user, walletAddress, logout } = useAuth();
@@ -16,22 +15,23 @@ export default function ProfilePage() {
   const { tier, usedToday, remaining, atLimit, FREE_DAILY_LIMIT } = useTier();
   const isReal = mode === 'real';
 
-  const [wallet, setWallet]         = useState(null);
-  const [trades, setTrades]         = useState([]);
-  const [stats, setStats]           = useState(null);
-  const [bridges, setBridges]       = useState([]);
-  const [loading, setLoading]       = useState(true);
+  const [wallet, setWallet] = useState(null);
+  const [trades, setTrades] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [bridges, setBridges] = useState([]);
+  const [pretiumTxs, setPretiumTxs] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   // Auto-trade permissions state
-  const [perms, setPerms]           = useState(null);
+  const [perms, setPerms] = useState(null);
   const [permsLoading, setPermsLoading] = useState(false);
-  const [permsSaving, setPermsSaving]   = useState(false);
+  const [permsSaving, setPermsSaving] = useState(false);
 
-  const [dbUsername, setDbUsername]   = useState('');
+  const [dbUsername, setDbUsername] = useState('');
   const [editingName, setEditingName] = useState(false);
   const [newUsername, setNewUsername] = useState('');
-  const [savingName, setSavingName]   = useState(false);
-  const [saveError, setSaveError]     = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [showPremiumGate, setShowPremiumGate] = useState(false);
 
   useEffect(() => {
@@ -45,19 +45,20 @@ export default function ProfilePage() {
       .then(data => {
         if (data?.username) {
           setDbUsername(data.username);
-          try { window.localStorage.setItem('nort_username', data.username); } catch {}
+          try { window.localStorage.setItem('nort_username', data.username); } catch { }
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [walletAddress]);
 
   useEffect(() => {
-    Promise.all([getFullWallet(), getTrades(), getUserStats(), getBridgeHistory()])
-      .then(([w, t, s, b]) => {
+    Promise.all([getFullWallet(), getTrades(), getUserStats(), getBridgeHistory(), getPretiumTransactions(null, 5)])
+      .then(([w, t, s, b, f]) => {
         setWallet(w);
         setTrades(t);
         setStats(s);
         setBridges(b.bridges || []);
+        setPretiumTxs(f.transactions || []);
       })
       .catch(console.warn)
       .finally(() => setLoading(false));
@@ -92,30 +93,30 @@ export default function ProfilePage() {
         body: JSON.stringify({ wallet_address: walletAddress.toLowerCase(), username: newUsername.trim() }),
       });
       setDbUsername(newUsername.trim());
-      try { window.localStorage.setItem('nort_username', newUsername.trim()); } catch {}
+      try { window.localStorage.setItem('nort_username', newUsername.trim()); } catch { }
       setEditingName(false);
     } catch { setSaveError('Could not save. Try again.'); }
     finally { setSavingName(false); }
   };
 
   const displayName = dbUsername || user?.firstName || user?.name || 'Trader';
-  const initials    = displayName.length >= 2 ? displayName.slice(0, 2).toUpperCase() : 'TR';
-  const isNewUser   = !dbUsername && !user?.firstName && !user?.name;
+  const initials = displayName.length >= 2 ? displayName.slice(0, 2).toUpperCase() : 'TR';
+  const isNewUser = !dbUsername && !user?.firstName && !user?.name;
 
   // Use the right trade list based on mode
-  const activeTrades   = trades.filter(t => t.status === 'open');
-  const closedTrades   = trades.filter(t => t.status === 'closed');
-  const wins           = closedTrades.filter(t => (t.pnl || 0) > 0);
-  const losses         = closedTrades.filter(t => (t.pnl || 0) < 0);
-  const winRate        = closedTrades.length > 0 ? Math.round((wins.length / closedTrades.length) * 100) : 0;
-  const totalPnl       = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+  const activeTrades = trades.filter(t => t.status === 'open');
+  const closedTrades = trades.filter(t => t.status === 'closed');
+  const wins = closedTrades.filter(t => (t.pnl || 0) > 0);
+  const losses = closedTrades.filter(t => (t.pnl || 0) < 0);
+  const winRate = closedTrades.length > 0 ? Math.round((wins.length / closedTrades.length) * 100) : 0;
+  const totalPnl = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
 
   // Balance to display depends on mode
   const displayBalance = isReal
     ? (wallet?.realBalanceUsdc ?? 0)
     : (wallet?.paperBalance ?? 0);
 
-  const fmt      = n => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
+  const fmt = n => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
   const pnlColor = n => n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'inherit';
   const bridgeStatusColor = s => ({ done: 'var(--green)', failed: 'var(--red)', bridging: 'var(--teal)', pending: 'var(--muted)' }[s] || 'var(--muted)');
 
@@ -294,11 +295,11 @@ export default function ProfilePage() {
             <>
               <div className="sec-lbl fu d6"><span className="sec-t">Open Positions</span><span className="sec-t">{activeTrades.length} active</span></div>
               {activeTrades.map((t, i) => (
-                <div key={t.id} className={`trade-item fu d${Math.min(i+1,6)}`}>
+                <div key={t.id} className={`trade-item fu d${Math.min(i + 1, 6)}`}>
                   <div className={`trade-side-badge ${t.side}`}>{t.side.toUpperCase()}</div>
                   <div className="trade-info">
                     <div className="trade-q">{t.q}</div>
-                    <div className="trade-meta">${t.amount} · {(t.price*100).toFixed(0)}¢ entry</div>
+                    <div className="trade-meta">${t.amount} · {(t.price * 100).toFixed(0)}¢ entry</div>
                   </div>
                   <div className="trade-pnl" style={{ color: pnlColor(t.pnl) }}>{t.pnl ? fmt(t.pnl) : '—'}</div>
                 </div>
@@ -318,13 +319,13 @@ export default function ProfilePage() {
           ) : (
             <div style={{ paddingBottom: 8 }}>
               {closedTrades.map((t, i) => (
-                <div key={t.id} className={`trade-item fu d${Math.min(i+1,6)}`}>
+                <div key={t.id} className={`trade-item fu d${Math.min(i + 1, 6)}`}>
                   <div className={`trade-side-badge ${t.side}`}>{t.side.toUpperCase()}</div>
                   <div className="trade-info">
                     <div className="trade-q">{t.q}</div>
-                    <div className="trade-meta">${t.amount} · {(t.price*100).toFixed(0)}¢ · closed</div>
+                    <div className="trade-meta">${t.amount} · {(t.price * 100).toFixed(0)}¢ · closed</div>
                   </div>
-                  <div className="trade-pnl" style={{ color: pnlColor(t.pnl||0) }}>{fmt(t.pnl||0)}</div>
+                  <div className="trade-pnl" style={{ color: pnlColor(t.pnl || 0) }}>{fmt(t.pnl || 0)}</div>
                 </div>
               ))}
             </div>
@@ -411,7 +412,7 @@ export default function ProfilePage() {
           <div className="settings-group fu d8">
             <div className="settings-item">
               <div className="settings-label">Address</div>
-              <div className="settings-value mono">{walletAddress ? `${walletAddress.slice(0,6)}...${walletAddress.slice(-4)}` : 'Not connected'}</div>
+              <div className="settings-value mono">{walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : 'Not connected'}</div>
             </div>
             <div className="settings-item">
               <div className="settings-label">Mode</div>
@@ -421,11 +422,53 @@ export default function ProfilePage() {
             </div>
             {isReal && (
               <div className="settings-item">
-                <div className="settings-label">USDC on Base</div>
+                <div className="settings-label">USDC Balance</div>
                 <div className="settings-value">${(wallet?.realBalanceUsdc ?? 0).toFixed(2)}</div>
               </div>
             )}
           </div>
+
+          {/* ── Deposit / Withdraw Quick Actions ── */}
+          {isReal && (
+            <div className="fu d8" style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 4 }}>
+              <Link href="/wallet" style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '14px 0', borderRadius: 'var(--rsm)',
+                background: 'var(--teal-dim)', border: '1px solid var(--teal-border)',
+                color: 'var(--teal)', fontSize: 13, fontWeight: 600, textDecoration: 'none',
+                fontFamily: 'Plus Jakarta Sans, sans-serif',
+              }}>
+                Deposit / Withdraw
+              </Link>
+            </div>
+          )}
+
+          {/* ── Pretium Transaction History ── */}
+          {isReal && pretiumTxs.length > 0 && (
+            <>
+              <div className="sec-lbl fu d8"><span className="sec-t">M-Pesa Transactions</span><span className="sec-t">{pretiumTxs.length} recent</span></div>
+              <div className="settings-group fu d9">
+                {pretiumTxs.map(tx => (
+                  <div key={tx.transaction_id} className="settings-item">
+                    <div className="settings-label">
+                      {tx.type === 'onramp' ? 'Deposit' : 'Withdraw'} · {tx.type === 'onramp'
+                        ? `KES ${Number(tx.amount_fiat || 0).toLocaleString()}`
+                        : `$${Number(tx.amount_crypto || 0).toFixed(2)}`}
+                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
+                        {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : ''}
+                      </div>
+                    </div>
+                    <div className="settings-value" style={{
+                      color: tx.status === 'completed' ? 'var(--green)' : ['failed', 'expired'].includes(tx.status) ? 'var(--red)' : '#F59E0B',
+                      fontFamily: 'DM Mono,monospace', fontSize: 11,
+                    }}>
+                      {tx.status.toUpperCase()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* ── Logout ── */}
           <div className="settings-group fu d9" style={{ marginTop: 8 }}>

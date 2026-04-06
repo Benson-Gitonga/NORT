@@ -1,7 +1,4 @@
-from dotenv import load_dotenv
-load_dotenv(override=True)  # MUST be first — database.py reads DATABASE_URL at import time
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
@@ -14,10 +11,8 @@ from services.backend.api.advice import router as advice_router
 from services.backend.api.leaderboard import router as leaderboard_router
 from services.backend.api.fx import router as fx_router
 from services.backend.api.mode import router as mode_router
-from services.backend.api.bridge import router as bridge_router
-from services.backend.api.permissions import router as permissions_router  # Task 10
-from services.backend.api.chat import router as chat_router                # GlobalChatButton
-from services.backend.api.test_runner import router as test_router         # GET /agent/test
+from services.backend.api.bridge import router as bridge_router     # Phase 2
+from services.backend.api.pretium import router as pretium_router   # Phase 3
 from services.backend.api.telegram import router as telegram_router
 from services.backend.api.x402 import router as x402_router
 from services.backend.data.database import init_db, engine
@@ -53,11 +48,18 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
 
 
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="NORT Backend", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://nort-landing-nine.vercel.app", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,15 +85,11 @@ app.include_router(leaderboard_router,  prefix="/api")
 app.include_router(fx_router)
 app.include_router(fx_router,           prefix="/api")
 app.include_router(mode_router)
-app.include_router(mode_router,         prefix="/api")
-app.include_router(bridge_router)
-app.include_router(bridge_router,       prefix="/api")
-app.include_router(permissions_router)           # POST|GET /permissions
-app.include_router(permissions_router,  prefix="/api")
-app.include_router(chat_router)                  # POST /agent/chat
-app.include_router(chat_router,         prefix="/api")
-app.include_router(test_router)                  # GET /agent/test
-app.include_router(test_router,         prefix="/api")
+app.include_router(mode_router,        prefix="/api")
+app.include_router(bridge_router)      # GET|POST /bridge/*
+app.include_router(bridge_router,      prefix="/api")   # /api/bridge/*
+app.include_router(pretium_router)      # GET|POST /pretium/*
+app.include_router(pretium_router,      prefix="/api")   # /api/pretium/*
 
 
 @app.api_route("/", methods=["GET", "HEAD"])

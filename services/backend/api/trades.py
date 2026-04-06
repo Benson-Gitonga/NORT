@@ -26,6 +26,7 @@ from services.backend.core.paper_trading import (
     settle_trade,
     settle_all_open_trades,
 )
+from services.backend.api.auth import get_current_user
 
 router = APIRouter(tags=["Paper Trading"], redirect_slashes=False)
 
@@ -51,10 +52,10 @@ class SettleAllRequest(BaseModel):
 # ─── BUY ─────────────────────────────────────────────────────────────────────
 
 @router.post("/papertrade")
-def create_paper_trade(request: PaperTradeRequest, session: Session = Depends(get_session)):
+def create_paper_trade(request: PaperTradeRequest, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     try:
         trade = place_paper_trade(
-            telegram_user_id=request.telegram_user_id,
+            telegram_user_id=current_user["wallet"],
             market_id=request.market_id,
             market_question=request.market_question,
             outcome=request.outcome,
@@ -87,7 +88,7 @@ def create_paper_trade(request: PaperTradeRequest, session: Session = Depends(ge
 # ─── SELL (exit early at current market price) ───────────────────────────────
 
 @router.post("/trade/sell/{trade_id}")
-def sell_position(trade_id: int, session: Session = Depends(get_session)):
+def sell_position(trade_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     """
     Sell an open position at the current live market price.
 
@@ -98,6 +99,11 @@ def sell_position(trade_id: int, session: Session = Depends(get_session)):
     Example: POST /trade/sell/42
     """
     try:
+        trade = session.get(PaperTrade, trade_id)
+        if not trade:
+            raise HTTPException(status_code=404, detail="Trade not found")
+        if trade.telegram_user_id.lower() != current_user["wallet"].lower():
+            raise HTTPException(status_code=403, detail="Not your trade")
         result = sell_trade(trade_id, session)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -159,10 +165,11 @@ def settle_all_trades(request: SettleAllRequest, session: Session = Depends(get_
 
 @router.get("/trade/history")
 def trade_history(
-    telegram_user_id: str,
     status: Optional[str] = None,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
+    telegram_user_id = current_user["wallet"]
     stmt = select(PaperTrade).where(PaperTrade.telegram_user_id == str(telegram_user_id))
     if status:
         stmt = stmt.where(PaperTrade.status == status.upper())

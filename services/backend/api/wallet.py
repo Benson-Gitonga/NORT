@@ -37,6 +37,7 @@ from services.backend.core.paper_trading import (
     _ensure_wallet_config,
 )
 from services.backend.data.models import User
+from services.backend.api.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +298,7 @@ def _handle_funds_deposited(payload: dict, session: Session) -> dict:
 
     logger.info(f"[privy-webhook] funds.deposited: {amount} {token} → {wallet_address} on chain {chain_id}")
 
-    # TODO Phase 3: update WalletConfig.real_balance_usdc when Fonbnk deposits arrive
+    # TODO Phase 3: update WalletConfig.real_balance_usdc when Pretium deposits arrive
     return {
         "status":         "ok",
         "event":          "funds.deposited",
@@ -314,6 +315,7 @@ def wallet_summary(
     wallet_address: Optional[str] = None,
     telegram_user_id: Optional[str] = None,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Get paper wallet summary. Accepts wallet_address OR telegram_user_id.
@@ -323,10 +325,13 @@ def wallet_summary(
         GET /wallet/summary?telegram_user_id=987654321
     """
     if not wallet_address and not telegram_user_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide either wallet_address or telegram_user_id.",
-        )
+        # Default to current user
+        wallet_address = current_user["wallet"]
+    
+    # Validation against token
+    target = (wallet_address or telegram_user_id).lower()
+    if current_user["wallet"].lower() != target:
+        raise HTTPException(status_code=403, detail="Cannot access other users' wallet details")
 
     try:
         summary = get_wallet_summary(

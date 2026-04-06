@@ -4,6 +4,9 @@ from sqlalchemy import text
 
 # Import ALL models so SQLModel registers every table with create_all()
 from services.backend.data.models import (
+    User, Market, AISignal, Payment, Trade,
+    PaperTrade, WalletConfig, LeaderboardSnapshot,
+    BridgeTransaction, RealTrade, PretiumTransaction,
     User, Market, AISignal, Payment, TelegramProfile, Trade,
     PaperTrade, WalletConfig, LeaderboardSnapshot,
     Conversation, UserPermission, AuditLog,

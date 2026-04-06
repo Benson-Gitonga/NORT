@@ -7,29 +7,17 @@ import ModeToggleModal from './ModeToggleModal';
 import { useTier } from '@/hooks/useTier';
 
 const NAV_ITEMS = [
-  { href: '/',             key: 'feed',         label: 'Feed'    },
-  { href: '/signals',      key: 'signals',      label: 'Signals' },
-  { href: '/leaderboard',  key: 'leaderboard',  label: 'Ranks'   },
-  { href: '/achievements', key: 'achievements', label: 'Badges'  },
-  { href: '/trade',        key: 'bets',         label: 'Bets'    },
-  { href: '/profile',      key: 'profile',      label: 'Profile' },
+  { href: '/', key: 'feed', label: 'Feed', icon: <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg> },
+  { href: '/signals', key: 'signals', label: 'Signals', icon: <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg> },
+  { href: '/leaderboard', key: 'leaderboard', label: 'Ranks', icon: <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6" /></svg> },
+  { href: '/achievements', key: 'achievements', label: 'Badges', icon: <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6" /><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11" /></svg> },
+  { href: '/trade', key: 'bets', label: 'Bets', icon: <svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg> },
+  { href: '/wallet', key: 'wallet', label: 'Wallet', icon: <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2" /><path d="M2 10h20" /><circle cx="18" cy="16" r="1" /></svg> },
+  { href: '/profile', key: 'profile', label: 'Profile', icon: <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg> },
 ];
 
-function NavIcon({ navKey }) {
-  const s = {
-    width: 20, height: 20,
-    stroke: 'currentColor', fill: 'none',
-    strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round',
-  };
-  if (navKey === 'feed')         return <svg viewBox="0 0 24 24" {...s}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>;
-  if (navKey === 'signals')      return <svg viewBox="0 0 24 24" {...s}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
-  if (navKey === 'leaderboard')  return <svg viewBox="0 0 24 24" {...s}><path d="M18 20V10M12 20V4M6 20v-6"/></svg>;
-  if (navKey === 'achievements') return <svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>;
-  if (navKey === 'bets')         return <svg viewBox="0 0 24 24" {...s}><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>;
-  if (navKey === 'profile')      return <svg viewBox="0 0 24 24" {...s}><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
-  return null;
-}
-
+// ── Mode pill — shown on both mobile and desktop navbars ──────────────────────
+// Paper = blue/grey, Real = amber with pulse dot
 function ModePill({ onClick }) {
   const { mode, loading } = useTradingMode();
   if (loading) return null;
