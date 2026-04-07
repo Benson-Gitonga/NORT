@@ -14,6 +14,7 @@ from services.backend.api.mode import router as mode_router
 from services.backend.api.bridge import router as bridge_router     # Phase 2
 from services.backend.api.pretium import router as pretium_router   # Phase 3
 from services.backend.api.telegram import router as telegram_router
+from services.backend.api.chat import router as chat_router
 from services.backend.api.x402 import router as x402_router
 from services.backend.data.database import init_db, engine
 from services.backend.core.market_watch import run_market_watch  # Task 7
@@ -90,6 +91,8 @@ app.include_router(bridge_router)      # GET|POST /bridge/*
 app.include_router(bridge_router,      prefix="/api")   # /api/bridge/*
 app.include_router(pretium_router)      # GET|POST /pretium/*
 app.include_router(pretium_router,      prefix="/api")   # /api/pretium/*
+app.include_router(chat_router)
+app.include_router(chat_router,         prefix="/api")
 
 
 @app.api_route("/", methods=["GET", "HEAD"])

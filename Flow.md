@@ -31,7 +31,7 @@ All in paper trading mode — no real money, no real risk, fully demonstrable by
 |---|---|---|
 | Intern 1 | Market Data | Fetches Polymarket markets, stores them in SQLite |
 | Intern 2 | Signals Engine (Quant) | Scores and ranks markets, powers GET /signals |
-| Intern 3 | OpenClaw Agent | AI advice layer using OpenRouter |
+| Intern 3 | NORT Bot Agent | AI advice layer using OpenRouter |
 | Intern 4 | Telegram Bot + x402 | All bot commands, payment gating |
 | Intern 5 | Paper Trading | Paper trade engine and wallet |
 | Intern 6 | Dashboard | Next.js web UI showing all live data |
@@ -57,7 +57,7 @@ All in paper trading mode — no real money, no real risk, fully demonstrable by
                ▼                   ▼
 ┌─────────────────────────────────────────────┐
 │            DATA & INTELLIGENCE              │
-│   SQLite Database      OpenClaw + OpenRouter│
+│   SQLite Database      NORT Bot + OpenRouter│
 │   (assistant.db)       (AI advice only)     │
 └─────────────────────────────────────────────┘
 ```
@@ -124,7 +124,7 @@ Used for all normal commands. Fast, cheap, no AI involved.
 ### Path 2 — Agent Path (With AI)
 
 ```
-User → Telegram Bot → (x402 check) → FastAPI → OpenClaw → OpenRouter → LLM → Response
+User → Telegram Bot → (x402 check) → FastAPI → NORT Bot → OpenRouter → LLM → Response
 ```
 
 Used only when the user explicitly asks for advice. Slower, costs tokens, produces structured analysis.
@@ -135,7 +135,7 @@ Used only when the user explicitly asks for advice. Slower, costs tokens, produc
 /pay <proof>           → submits x402 proof to unlock premium
 ```
 
-**The rule is absolute: OpenClaw runs ONLY for advice commands. Never for anything else.**
+**The rule is absolute: NORT Bot runs ONLY for advice commands. Never for anything else.**
 
 ---
 
@@ -168,7 +168,7 @@ Used only when the user explicitly asks for advice. Slower, costs tokens, produc
 
 5. signals.py saves a snapshot to the AISignal table
    → Intern 6 reads this for the Dashboard Signals page
-   → Intern 3's OpenClaw reads this when generating advice
+   → Intern 3's NORT Bot reads this when generating advice
 
 6. Response returned to Telegram as JSON
 
@@ -197,21 +197,21 @@ Used only when the user explicitly asks for advice. Slower, costs tokens, produc
    with { market_id: "market-001" }
 
 3. FastAPI backend receives the request
-   → this is an advice command → routes to OpenClaw
+   → this is an advice command → routes to NORT Bot
    → no x402 check needed (free advice)
 
-4. OpenClaw agent (services/agent/) activates
+4. NORT Bot agent (services/agent/) activates
    → calls get_market("market-001")    → fetches market from backend
    → calls get_signals()               → fetches current signal snapshot
    → calls get_wallet_summary()        → fetches user's paper trade history
 
-5. OpenClaw builds a structured prompt using prompt_templates.py
+5. NORT Bot builds a structured prompt using prompt_templates.py
    → sends it to OpenRouter API
    → OpenRouter routes to the configured LLM (e.g. Claude, GPT-4o)
 
 6. LLM returns structured advice
 
-7. OpenClaw formats it into the required output:
+7. NORT Bot formats it into the required output:
 
    📋 MARKET ANALYSIS — Will BTC hit $100k by March?
 
@@ -263,7 +263,7 @@ Used only when the user explicitly asks for advice. Slower, costs tokens, produc
 6. Bot now calls POST /agent/advice (same as free advice)
    but with a premium=true flag, which may unlock deeper analysis
 
-7. OpenClaw runs the full analysis (same flow as /advice above)
+7. NORT Bot runs the full analysis (same flow as /advice above)
 
 8. Premium advice returned to user
 ```
@@ -371,21 +371,21 @@ signals_engine output
         ├──→ Telegram /signals command (Intern 4 reads it)
         ├──→ Dashboard Signals page (Intern 6 reads it)
         ├──→ AISignal table in SQLite (snapshot stored after every call)
-        └──→ OpenClaw get_signals() tool (Intern 3's agent reads it for advice)
+        └──→ NORT Bot get_signals() tool (Intern 3's agent reads it for advice)
 ```
 
 **If the signals engine doesn't work, all four of these break.**
 
 ---
 
-## OpenClaw + OpenRouter — The AI Layer
+## NORT Bot + OpenRouter — The AI Layer
 
 ### What OpenRouter is
 
 OpenRouter is a gateway that sits between our code and the actual AI model. Instead of calling OpenAI or Anthropic directly, we call OpenRouter once and it handles routing to whichever model we configured.
 
 ```
-Our Code (OpenClaw)
+Our Code (NORT Bot)
         │
         ▼
 OpenRouter API (openrouter.ai/api/v1)
@@ -398,9 +398,9 @@ OpenRouter API (openrouter.ai/api/v1)
 
 To swap models, change one line in `agent.json`. No code changes.
 
-### What OpenClaw is
+### What NORT Bot is
 
-OpenClaw is not a chatbot. It is a structured reasoning agent. It always produces the same output format regardless of which market it analyzes:
+NORT Bot is not a chatbot. It is a structured reasoning agent. It always produces the same output format regardless of which market it analyzes:
 
 ```json
 {
@@ -460,7 +460,7 @@ Backend checks:
 Receipt stored in Payment table
         │
         ▼
-OpenClaw activated → full premium advice returned
+NORT Bot activated → full premium advice returned
 ```
 
 ---
@@ -493,7 +493,7 @@ STEP 1 → /trending
 
 STEP 2 → /advice <id>
          Shows: structured AI analysis appears
-         Proves: OpenClaw + OpenRouter working, signals feeding the agent
+         Proves: NORT Bot + OpenRouter working, signals feeding the agent
 
 STEP 3 → /premium_advice <id>
          Shows: "locked, payment required" message
@@ -517,7 +517,7 @@ STEP 6 → Open Dashboard
 ## The Rules — Non-Negotiable
 
 ```
-1. OpenClaw runs ONLY for /advice and /premium_advice
+1. NORT Bot runs ONLY for /advice and /premium_advice
    → Never for /trending, /signals, /market, /portfolio, /papertrade
 
 2. EXECUTION_MODE=PAPER always
@@ -551,7 +551,7 @@ Intern 1 (Markets)
                       │
                       ├──→ Intern 4 (Bot) serves /signals command
                       ├──→ Intern 6 (Dashboard) shows Signals page
-                      └──→ Intern 3 (OpenClaw) calls get_signals() for advice
+                      └──→ Intern 3 (NORT Bot) calls get_signals() for advice
                                   │
                                   └──→ Intern 4 (Bot) serves /advice command
                                         │
@@ -562,7 +562,7 @@ Intern 5 (Paper Trading)
          │
          ├──→ Intern 4 (Bot) serves /papertrade command
          ├──→ Intern 6 (Dashboard) shows Trades + Wallet pages
-         └──→ Intern 3 (OpenClaw) calls get_wallet_summary() for advice context
+         └──→ Intern 3 (NORT Bot) calls get_wallet_summary() for advice context
 ```
 
 Every intern's work feeds at least two other interns. Nothing is isolated. If one piece is missing, multiple things break downstream.
@@ -602,7 +602,7 @@ polymarket-ai-assistant/
 │   └── agent/
 │       ├── skills/          ← get_market(), get_signals(), get_wallet_summary()
 │       ├── agent.json       ← OpenRouter config (model, api key env var)
-│       └── prompt_templates.py ← builds structured prompts for OpenClaw
+│       └── prompt_templates.py ← builds structured prompts for NORT Bot
 │
 └── data/
     └── assistant.db         ← the single SQLite database file

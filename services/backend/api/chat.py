@@ -39,7 +39,7 @@ OPENROUTER_API_KEY_FALLBACK = os.getenv("OPENROUTER_API_KEY_FALLBACK", "").strip
 
 CHAT_MARKET_ID = "__global__"   # Conversation key for non-market chat sessions
 
-SYSTEM_PROMPT = """You are OpenClaw, an AI assistant for NORT — a Polymarket prediction market trading platform.
+SYSTEM_PROMPT = """You are NORT Bot, an AI assistant for NORT — a Polymarket prediction market trading platform.
 
 You help users understand:
 - Prediction markets and how they work
@@ -275,9 +275,13 @@ async def chat(request: ChatRequest):
         try:
             from services.backend.api.advice import (
                 fetch_market_data, fetch_market_signal,
-                search_prefetch, parse_response
+                search_prefetch, parse_response,
+                check_rate_limit,
             )
             from services.agent.orchestrator import run_orchestrator
+
+            # Enforce same rate limit as /agent/advice
+            check_rate_limit(request.user_id, premium=False)
 
             market_data   = fetch_market_data(market_id)
             market_signal = fetch_market_signal(market_id)
@@ -303,26 +307,23 @@ async def chat(request: ChatRequest):
             )
             advice_success = True
 
-            # Format advice as a clean chat reply
+            # Format advice — FREE tier: summary + plan only (no why/risks)
             plan_emoji = {"BUY YES": "🟢", "BUY NO": "🔴", "WAIT": "⏸️"}.get(resp.suggested_plan, "")
-            auto = resp.auto_trade_result
-            auto_note = ""
-            if auto:
-                if auto.get("executed"):
-                    auto_note = f"\n\n⚡ *Auto-trade fired:* {auto.get('reason', '')}"
-                elif auto.get("mode") == "confirm":
-                    auto_note = f"\n\n⏳ *Confirmation needed:* {auto.get('reason', '')}"
 
             reply = (
                 f"📊 *{market_question}*\n\n"
                 f"{resp.summary}\n\n"
-                f"**Why trending:** {resp.why_trending}\n\n"
-                f"**Risks:** {', '.join(resp.risk_factors)}\n\n"
+                f"🔒 Upgrade to Premium for full deep-dive analysis "
+                f"(why it's trending, risks, and exact position targets).\n\n"
                 f"{plan_emoji} **Plan:** {resp.suggested_plan} "
-                f"(confidence: {int(resp.confidence * 100)}%)"
-                f"{auto_note}\n\n"
+                f"(confidence: {int(resp.confidence * 100)}%)\n\n"
                 f"_{resp.disclaimer}_"
             )
+        except HTTPException as he:
+            if he.status_code == 429:
+                reply = f"⚠️ {he.detail}\n\nUpgrade to Premium for unlimited advice calls."
+            else:
+                reply = f"Sorry, I couldn't fetch advice for market `{market_id}` right now. Try again or tap a signal card."
         except Exception as e:
             print(f"[Chat] /advice pipeline error: {e}")
             reply = f"Sorry, I couldn't fetch advice for market `{market_id}` right now. Try again or tap a signal card."

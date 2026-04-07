@@ -1,7 +1,10 @@
 import json
+import re
+import time
 import httpx
 import os
 import asyncio
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -19,7 +22,7 @@ from services.agent.policies import check_policy
 from services.agent.executor import AutoTradeEngine
 from services.backend.core.x402_verifier import has_premium_access, has_any_confirmed_payment, payment_required_payload
 from services.backend.data.database import engine
-from services.backend.data.models import Market, AISignal
+from services.backend.data.models import Market, AISignal, AuditLog, Conversation
 from services.backend.api.auth import get_current_user
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
@@ -27,6 +30,13 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+
+# ─────────────────────────────────────────────────────────────
+# Tier Limits (defined at top so every endpoint can reference them)
+# ─────────────────────────────────────────────────────────────
+
+FREE_DAILY_LIMIT     = 10   # free users: 10 advice calls per day
+PREMIUM_HOURLY_LIMIT = 10   # premium users: 10 per hour (effectively unlimited for normal use)
 
 # ─────────────────────────────────────────────────────────────
 # Request / Response Models
@@ -113,10 +123,10 @@ async def search_prefetch(market_question: str) -> dict:
     }
 
 # ─────────────────────────────────────────────────────────────
-# OpenClaw Caller — single-shot enriched prompt
+# NORT Bot Caller — single-shot enriched prompt
 # ─────────────────────────────────────────────────────────────
 
-async def call_openclaw(
+async def call_nort_bot(
     market_id: str,
     market_question: str,
     market_data: dict,
@@ -160,7 +170,7 @@ Return JSON only. The market_id field must be exactly: {market_id}
         ]
     }
 
-    print(f"[OpenClaw] Sending prompt for market {market_id}")
+    print(f"[NORT Bot] Sending prompt for market {market_id}")
 
     async with httpx.AsyncClient(timeout=120) as client:
         try:
@@ -179,35 +189,47 @@ Return JSON only. The market_id field must be exactly: {market_id}
             return data["choices"][0]["message"]["content"]
 
         except httpx.ConnectError:
-            raise HTTPException(status_code=503, detail="OpenClaw gateway unreachable")
+            raise HTTPException(status_code=503, detail="NORT Bot gateway unreachable")
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=503, detail=f"OpenClaw error {e.response.status_code}")
+            raise HTTPException(status_code=503, detail=f"NORT Bot error {e.response.status_code}")
 
 # ─────────────────────────────────────────────────────────────
 # Debug Endpoint
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/usage")
-def get_advice_usage(wallet_address: str):
+def get_advice_usage(
+    wallet_address: str = "",
+    current_user: dict = Depends(get_current_user),
+):
     """
     Returns how many free advice calls the user has made today
     and whether they have premium access.
     Called by the frontend useTier hook.
+
+    Identity resolution (most → least authoritative):
+      1. JWT token wallet  (current_user["wallet"] — set by Privy auth)
+      2. wallet_address query param  (fallback for unauthenticated / Telegram users)
+    This ensures the same identity used by /agent/advice and /x402/verify
+    is used here, preventing mismatches after a demo or real payment.
     """
+    # Prefer the JWT-verified wallet over the raw query param
+    effective_wallet = (current_user.get("wallet") or "").strip() or wallet_address.strip()
+
     window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     with Session(engine) as session:
-        logs = session.exec(
+        all_logs = session.exec(
             select(AuditLog)
-            .where(AuditLog.telegram_user_id == wallet_address)
             .where(AuditLog.action == "advice")
             .where(AuditLog.created_at >= window_start)
         ).all()
+        logs = [l for l in all_logs if (l.telegram_user_id or "").lower() == effective_wallet.lower()]
     used_today = len(logs)
     is_premium = any(l.premium for l in logs)
     if not is_premium:
-        is_premium = has_any_confirmed_payment(wallet_address)
+        is_premium = has_any_confirmed_payment(effective_wallet)
     return {
-        "wallet_address": wallet_address,
+        "wallet_address": effective_wallet,
         "used_today":     used_today,
         "daily_limit":    FREE_DAILY_LIMIT,
         "is_premium":     is_premium,
@@ -444,9 +466,6 @@ def fetch_market_signal(market_id: str) -> dict:
 # Max 5 advice calls per user per hour, checked against AuditLog
 # ─────────────────────────────────────────────────────────────
 
-FREE_DAILY_LIMIT     = 10   # free users: 10 advice calls per day — after this they are blocked
-PREMIUM_HOURLY_LIMIT = 10   # premium users: 10 per hour (effectively unlimited for normal use)
-
 def check_rate_limit(telegram_id: str, premium: bool = False) -> None:
     if not telegram_id:
         return
@@ -460,12 +479,12 @@ def check_rate_limit(telegram_id: str, premium: bool = False) -> None:
         label = f"{FREE_DAILY_LIMIT} free advice calls per day"
 
     with Session(engine) as session:
-        count = session.exec(
+        all_logs = session.exec(
             select(AuditLog)
-            .where(AuditLog.telegram_user_id == telegram_id)
             .where(AuditLog.action == "advice")
             .where(AuditLog.created_at >= window_start)
         ).all()
+        count = [l for l in all_logs if (l.telegram_user_id or "").lower() == telegram_id.lower()]
     if len(count) >= limit:
         upgrade_hint = " Upgrade to Premium for unlimited advice." if not premium else ""
         raise HTTPException(
@@ -642,64 +661,133 @@ def save_conversation_turn(
 # ─────────────────────────────────────────────────────────────
 
 @router.post("/advice", response_model=AdviceResponse)
-@router.post("/advice")
-async def get_advice(request: Request, body_req: AdviceRequest, current_user: dict = Depends(get_current_user)):
-    from services.backend.main import limiter
-    
-    # We must call the limiter check manually if we can't use the decorator smoothly with request unpacking
-    # But usually `@limiter.limit("5/minute")` is applied before the function. Let's just wrap it.
-    pass
-
-@router.post("/advice", response_model=AdviceResponse)
 async def get_advice(
-    request: Request, 
-    body_req: AdviceRequest, 
-    current_user: dict = Depends(get_current_user)
+    request: Request,
+    body_req: AdviceRequest,
+    current_user: dict = Depends(get_current_user),
 ):
-    from services.backend.main import limiter
-    
     tool_calls_used: list[str] = []
+    start_time = time.monotonic()
+    success = False
 
-    if body_req.premium and not has_premium_access(current_user["wallet"], body_req.market_id):
-        return JSONResponse(
-            status_code=402,
-            content=payment_required_payload(body_req.market_id),
-        )
+    effective_user_id = current_user.get("wallet") or body_req.telegram_id
 
-    # 1. Fetch directly from Neon — no localhost calls
-    market_data   = fetch_market_data(body_req.market_id)
-    market_signal = fetch_market_signal(body_req.market_id)
+    # ── Auto-upgrade: if the user has a confirmed payment, always give Premium ──
+    # This fixes state-lag where a user has paid but the frontend still sends
+    # premium=False because the local tier state hasn't refreshed yet.
+    if not body_req.premium and effective_user_id:
+        if has_any_confirmed_payment(effective_user_id):
+            print(f"[AutoUpgrade] Upgrading {effective_user_id} to Premium (confirmed payment found)")
+            body_req.premium = True
 
-    # 2. Extract market question
-    market_question = (
-        market_data.get("question") or
-        market_data.get("summary") or
-        f"prediction market {body_req.market_id}"
-    ).strip()
+    # Rate limit check
+    check_rate_limit(effective_user_id, body_req.premium)
 
-    print(f"[Agent] Market {body_req.market_id}: {market_question}")
+    # Policy gate
+    policy = check_policy(body_req.market_id)
+    if not policy["allowed"]:
+        raise HTTPException(status_code=400, detail=policy["reason"])
 
-        # Premium users get prior conversation context.
-        # Free users do not get memory, but the current question should still shape this analysis.
-        history = load_conversation_history(effective_user_id, request.market_id) if request.premium else []
-        if request.user_message:
-            history = [*history, {"role": "user", "content": request.user_message}]
+    try:
+        if body_req.premium and not has_premium_access(effective_user_id, body_req.market_id):
+            return JSONResponse(
+                status_code=402,
+                content=payment_required_payload(body_req.market_id),
+            )
+
+        allow_cache = (not body_req.premium) and (not body_req.user_message)
+        cached = get_cached_advice(effective_user_id, body_req.market_id, allow_cache=allow_cache)
+        if cached:
+            success = True
+            return cached
+
+        market_data   = fetch_market_data(body_req.market_id)
+        market_signal = fetch_market_signal(body_req.market_id)
+
+        market_question = (
+            market_data.get("question") or
+            market_data.get("summary") or
+            f"prediction market {body_req.market_id}"
+        ).strip()
+
+        print(f"[Agent] Market {body_req.market_id}: {market_question}")
+
+        history = load_conversation_history(effective_user_id, body_req.market_id) if body_req.premium else []
+        if body_req.user_message:
+            history = [*history, {"role": "user", "content": body_req.user_message}]
 
         search_context = await search_prefetch(market_question)
         tool_calls_used += [
             f"tavily_news: {search_context['queries']['news']}",
             f"tavily_social: {search_context['queries']['social']}",
-            f"tavily_context: {search_context['queries']['context']}"
+            f"tavily_context: {search_context['queries']['context']}",
         ]
 
-    # 4. Send everything to OpenClaw in one enriched prompt
-    raw_response = await call_openclaw(
-        market_id=body_req.market_id,
-        market_question=market_question,
-        market_data=market_data,
-        market_signal=market_signal,
-        search_context=search_context
-    )
+        raw_response, technical_result, sentiment_result = await run_orchestrator(
+            market_id=body_req.market_id,
+            market_data=market_data,
+            market_signal=market_signal,
+            search_context=search_context,
+            telegram_id=effective_user_id,
+            premium=body_req.premium,
+            history=history,
+            language=body_req.language,
+        )
 
-    print(f"[Agent] Raw response: {raw_response}")
-    return parse_response(raw_response, body_req.market_id, tool_calls_used)
+        response_obj = parse_response(
+            raw_response,
+            body_req.market_id,
+            tool_calls_used,
+            technical_momentum=technical_result.get("momentum", "NEUTRAL"),
+            sentiment_label=sentiment_result.get("label", "Neutral"),
+        )
+
+        if body_req.premium and body_req.language == "sw":
+            translator = GoogleTranslator(source="en", target="sw")
+            try:
+                response_obj.summary       = translator.translate(response_obj.summary)
+                response_obj.why_trending  = translator.translate(response_obj.why_trending)
+                response_obj.risk_factors  = [translator.translate(rf) for rf in response_obj.risk_factors]
+                response_obj.disclaimer    = translator.translate(response_obj.disclaimer)
+                plan_map = {"BUY YES": "NUNUA NDIYO", "BUY NO": "NUNUA HAPANA", "WAIT": "SUBIRI"}
+                if response_obj.suggested_plan in plan_map:
+                    response_obj.suggested_plan = plan_map[response_obj.suggested_plan]
+            except Exception as e:
+                print(f"[Translation Error] {e}")
+
+        success = True
+
+        save_conversation_turn(
+            user_id=effective_user_id,
+            market_id=body_req.market_id,
+            user_content=body_req.user_message or f"/advice {body_req.market_id}",
+            advice=response_obj,
+        )
+
+        if effective_user_id:
+            try:
+                minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+                advice_id = f"{effective_user_id}-{body_req.market_id}-{minute_bucket}"
+                auto_result = await AutoTradeEngine.execute(
+                    market_id=body_req.market_id,
+                    suggested_plan=response_obj.suggested_plan,
+                    confidence=response_obj.confidence,
+                    telegram_id=effective_user_id,
+                    advice_id=advice_id,
+                )
+                response_obj.auto_trade_result = auto_result
+            except Exception as e:
+                print(f"[AutoTrade] Engine error (non-fatal): {e}")
+                response_obj.auto_trade_result = {"executed": False, "reason": str(e), "mode": "error"}
+
+        return response_obj
+
+    finally:
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        write_audit_log(
+            telegram_id=effective_user_id,
+            market_id=body_req.market_id,
+            premium=body_req.premium,   # reflects auto-upgrade if it fired
+            success=success,
+            response_time_ms=elapsed_ms,
+        )

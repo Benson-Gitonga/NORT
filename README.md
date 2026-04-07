@@ -18,4 +18,4 @@ Commands: /trending, /market <id>, /signals, /portfolio, /papertrade
 🧠 The Agent Path (Advice Commands)
 Agentic AI reasoning for deep market analysis.
 
-Flow: Telegram → x402 Verify → OpenClaw (OpenRouter) → Response
+Flow: Telegram → x402 Verify → NORT Bot (OpenRouter) → Response

@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 const INIT_MSG = {
   id: 'init',
   role: 'ai',
-  text: "Hey — I'm OpenClaw 🤖\n\nAsk me anything about NORT, markets, or trading.\n\nTip: Type /advice <market_id> to get full AI analysis on any market.",
+  text: "Hey — I'm NORT Bot 🤖\n\nAsk me anything about NORT, markets, or trading.\n\nTip: Type /advice <market_id> to get full AI analysis on any market.",
 };
 
 export default function GlobalChatButton() {
@@ -71,7 +71,7 @@ export default function GlobalChatButton() {
           <div className="gchat-header">
             <div className="chat-title">
               <span className="ai-dot" />
-              OpenClaw
+              NORT Bot
               <span className="chat-badge">GLOBAL</span>
             </div>
             <button className="chat-close" onClick={() => setOpen(false)}>✕</button>

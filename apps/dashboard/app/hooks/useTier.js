@@ -7,11 +7,22 @@
  * FREE:    wallet connected, no payment on record
  * PREMIUM: wallet connected + valid x402 payment verified
  *
- * Usage count is read from AuditLog via a new backend endpoint.
+ * Usage count is read from AuditLog via the /agent/usage backend endpoint.
+ * The request includes the Privy JWT token so the backend resolves identity
+ * the same way as /agent/advice and /x402/verify — preventing tier mismatches
+ * after a demo or real payment.
  * Falls back to localStorage for instant UI (no loading flash).
  */
 import { useState, useEffect, useCallback } from 'react';
 import { BASE } from '@/lib/api';
+
+// Optional: import getAccessToken if available in this context.
+// We use a try/catch so this still works if Privy isn't loaded yet.
+let _getAccessToken = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  _getAccessToken = require('@privy-io/react-auth').getAccessToken;
+} catch {}
 
 const FREE_DAILY_LIMIT = 10;
 
@@ -32,9 +43,19 @@ export function useTier() {
   const refresh = useCallback(async () => {
     if (!wallet) { setLoading(false); return; }
     try {
+      // Build auth headers — include Privy JWT so the backend resolves
+      // identity from the token (same as every other authenticated endpoint).
+      const headers = {};
+      if (_getAccessToken) {
+        try {
+          const token = await _getAccessToken();
+          if (token) headers['Authorization'] = `Bearer ${token}`;
+        } catch {}
+      }
+
       const res = await fetch(
-        // NOTE: the advice router is mounted at /agent (no /api prefix) in main.py
-        `${BASE}/agent/usage?wallet_address=${encodeURIComponent(wallet)}&t=${Date.now()}`
+        `${BASE}/agent/usage?wallet_address=${encodeURIComponent(wallet)}&t=${Date.now()}`,
+        { headers }
       );
       if (res.ok) {
         const data = await res.json();

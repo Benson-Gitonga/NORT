@@ -18,11 +18,12 @@ class VerifyPaymentRequest(BaseModel):
 @router.post("/verify")
 async def verify_payment(request: VerifyPaymentRequest, current_user: dict = Depends(get_current_user)):
     telegram_id = request.telegram_id or request.user_id or request.wallet_address
-    
-    # Optional strict ownership validation:
-    if current_user["wallet"].lower() != (telegram_id or "").lower():
-        # Usually backend prefers the authoritative token wallet over requested param
-        telegram_id = current_user["wallet"]
+
+    # Optional strict ownership validation — guard against wallet being None
+    wallet = (current_user.get("wallet") or "").strip()
+    if wallet and wallet.lower() != (telegram_id or "").lower():
+        # Backend prefers the authoritative token wallet over the requested param
+        telegram_id = wallet
     
     return verify_x402_payment(
         proof=request.proof,

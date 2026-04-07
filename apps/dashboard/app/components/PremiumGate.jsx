@@ -12,7 +12,8 @@
  *   used    — how many calls used today (shown in limit mode)
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { verifyPayment } from '@/lib/api';
 
 const FEATURES = [
   { free: '10 AI advice calls / day',   premium: 'Unlimited AI advice calls'   },
@@ -23,14 +24,47 @@ const FEATURES = [
 ];
 
 export default function PremiumGate({ open, onClose, reason = 'limit', used = 10, limit = 10 }) {
+  const [payInput, setPayInput] = useState('');
+  const [payLoading, setPayLoading] = useState(false);
+  const [payError, setPayError] = useState('');
+  const [paySuccess, setPaySuccess] = useState(false);
+
   useEffect(() => {
     if (!open) return;
+    setPayInput('');
+    setPayError('');
+    setPaySuccess(false);
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
   if (!open) return null;
+
+  const handlePay = async () => {
+    const proof = payInput.trim();
+    if (!proof) return;
+    setPayLoading(true);
+    setPayError('');
+    try {
+      // Pass __global__ for the general profile unlock
+      const result = await verifyPayment(proof, '__global__');
+      if (result.valid) {
+        setPaySuccess(true);
+        // Refresh useTier hook via event
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('nort-tier-refresh'));
+        }
+        setTimeout(() => onClose(), 1500);
+      } else {
+        setPayError(result.error || 'Payment invalid');
+      }
+    } catch {
+      setPayError('Verification failed. Try again.');
+    } finally {
+      setPayLoading(false);
+    }
+  };
 
   const isLimit = reason === 'limit';
 
@@ -88,18 +122,45 @@ export default function PremiumGate({ open, onClose, reason = 'limit', used = 10
           ))}
         </div>
 
+        {/* Payment input section */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--g4)', lineHeight: 1.6, marginBottom: 8, padding: '0 4px' }}>
+            <strong>💳 How to unlock Premium:</strong><br />
+            Send <strong>0.10 USDC</strong> to the NORT treasury on <strong>Base chain</strong>,
+            then paste your transaction hash below.<br />
+            <span style={{ color: 'var(--teal)', fontSize: 11 }}>
+              🧪 Type <strong>"demo"</strong> to try Premium free (dev mode)
+            </span>
+          </div>
+          <input
+            type="text"
+            placeholder="Paste tx hash or type 'demo'..."
+            value={payInput}
+            onChange={e => setPayInput(e.target.value)}
+            style={{
+              width: '100%', padding: '12px', borderRadius: 8,
+              background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
+              color: 'var(--white)', fontSize: 14, outline: 'none', marginBottom: 8,
+              fontFamily: 'DM Mono, monospace'
+            }}
+          />
+          {payError && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8, padding: '0 4px' }}>❌ {payError}</div>}
+          {paySuccess && <div style={{ color: 'var(--green)', fontSize: 12, marginBottom: 8, padding: '0 4px' }}>✅ Payment confirmed! Unlocking...</div>}
+        </div>
+
         {/* CTA buttons */}
         <button
-          onClick={() => alert('Payment flow coming soon. Contact us to manually upgrade your account.')}
+          onClick={handlePay}
+          disabled={payLoading || paySuccess || !payInput.trim()}
           style={{
             width: '100%', padding: '13px 0', borderRadius: 10, border: 'none',
-            background: 'linear-gradient(135deg, #F59E0B, #EF4444)',
+            background: paySuccess ? 'var(--green)' : 'linear-gradient(135deg, #F59E0B, #EF4444)',
             color: '#000', fontSize: 14, fontWeight: 700,
-            fontFamily: 'DM Mono, monospace', cursor: 'pointer',
-            letterSpacing: '0.04em', marginBottom: 10,
+            fontFamily: 'DM Mono, monospace', cursor: paySuccess || !payInput.trim() ? 'default' : 'pointer',
+            letterSpacing: '0.04em', marginBottom: 10, opacity: payLoading || !payInput.trim() ? 0.5 : 1
           }}
         >
-          ⚡ UPGRADE TO PREMIUM
+          {payLoading ? 'VERIFYING...' : paySuccess ? 'UNLOCKED ✓' : '⚡ UPGRADE TO PREMIUM'}
         </button>
 
         <button

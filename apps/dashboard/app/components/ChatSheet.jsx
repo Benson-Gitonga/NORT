@@ -75,6 +75,20 @@ export default function ChatSheet({ signal, onClose }) {
 
     const stale = resp.stale_data_warning ? `\n\n⚠️ ${resp.stale_data_warning}` : '';
 
+    // If the backend already returned deep-dive fields (e.g. because the user has a
+    // confirmed payment and the auto-upgrade fired), show them regardless of whether
+    // the local tier state has caught up yet.
+    const hasDeepData = resp.why && resp.risks && resp.risks.length > 0;
+
+    if (tier === 'free' && !hasDeepData) {
+      return (
+        `${resp.summary}\n\n` +
+        `🔒 Unlock Premium to see full deep-dive (why it's trending, risks, and exact position targets).\n\n` +
+        `${planEmoji} Plan: ${resp.plan} · Confidence: ${confPct}%` +
+        autoNote + stale
+      );
+    }
+
     return (
       `${resp.summary}\n\n` +
       `Why trending: ${resp.why}\n\n` +
@@ -96,6 +110,7 @@ export default function ChatSheet({ signal, onClose }) {
         `Unlock Premium for unlimited advice, full analysis, and exact entry/exit targets.`
       );
       setGated(true);
+      refresh(); // sync the counter so the bar reflects the true used count
       return;
     }
 
@@ -216,13 +231,18 @@ export default function ChatSheet({ signal, onClose }) {
           {gated && (
             <div className="premium-gate">
               <div className="gate-label">PREMIUM · 0.10 USDC</div>
-              <div style={{ fontSize: 12, color: 'var(--g4)', lineHeight: 1.4, marginBottom: 8 }}>
-                Paste your x402 payment proof to unlock unlimited full analysis.
+              <div style={{ fontSize: 12, color: 'var(--g4)', lineHeight: 1.6, marginBottom: 8 }}>
+                <strong>💳 How to unlock Premium:</strong><br />
+                Send <strong>0.10 USDC</strong> to the NORT treasury on <strong>Base chain</strong>,
+                then paste your transaction hash below.<br />
+                <span style={{ color: 'var(--teal)', fontSize: 11 }}>
+                  🧪 Type <strong>"demo"</strong> to try Premium free (dev mode)
+                </span>
               </div>
               <input
                 className="chat-input"
                 style={{ borderRadius: 'var(--rsm)', width: '100%' }}
-                placeholder="Paste payment proof (try 'demo')..."
+                placeholder="Paste tx hash or type 'demo'..."
                 value={payInput}
                 onChange={e => setPayInput(e.target.value)}
               />

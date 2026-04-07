@@ -237,3 +237,40 @@ class PretiumTransaction(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
+
+# 13. AuditLog Table
+class AuditLog(SQLModel, table=True):
+    __tablename__ = "audit_logs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: Optional[str] = Field(default=None, index=True)
+    action: str = Field(default="advice")
+    market_id: Optional[str] = Field(default=None)
+    premium: bool = Field(default=False)
+    success: bool = Field(default=True)
+    response_time_ms: Optional[int] = Field(default=None)
+    outcome_correct: Optional[bool] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+# 14. PendingTrade Table
+class PendingTrade(SQLModel, table=True):
+    __tablename__ = "pending_trades"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    market_id: str
+    market_question: str
+    suggested_plan: str
+    confidence: float
+    amount_usdc: float
+    status: str = Field(default="pending")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    confirmed_at: Optional[datetime] = None
+
+# 15. AlertHistory Table
+class AlertHistory(SQLModel, table=True):
+    __tablename__ = "alert_history"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: str = Field(index=True)
+    market_id: str = Field(index=True)
+    score: float
+    sent_at: datetime = Field(default_factory=datetime.utcnow)

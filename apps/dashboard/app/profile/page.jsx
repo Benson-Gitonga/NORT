@@ -6,7 +6,9 @@ import { useTradingMode } from '@/components/TradingModeContext';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
 import Link from 'next/link';
-import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE } from '@/lib/api';
+import { useTier } from '@/hooks/useTier';
+import PremiumGate from '@/components/PremiumGate';
+import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, getPermissions, setPermissions, BASE } from '@/lib/api';
 
 export default function ProfilePage() {
   const { user, walletAddress, logout } = useAuth();

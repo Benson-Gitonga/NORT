@@ -16,6 +16,25 @@ const NAV_ITEMS = [
   { href: '/profile', key: 'profile', label: 'Profile', icon: <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg> },
 ];
 
+function NavIcon({ navKey }) {
+  const item = NAV_ITEMS.find(i => i.key === navKey);
+  if (!item) return null;
+  return (
+    <svg 
+      viewBox="0 0 24 24" 
+      fill="none" 
+      stroke="currentColor" 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+      className="nav-icon"
+      style={{ width: 20, height: 20 }}
+    >
+      {item.icon.props.children}
+    </svg>
+  );
+}
+
 // ── Mode pill — shown on both mobile and desktop navbars ──────────────────────
 // Paper = blue/grey, Real = amber with pulse dot
 function ModePill({ onClick }) {

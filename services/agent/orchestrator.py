@@ -1,7 +1,7 @@
 """
 orchestrator.py — The Multi-Agent Orchestrator (Phase Two Core)
 
-Replaces the single call_openclaw() function with a parallel team of sub-agents:
+Replaces the single call_nort_bot() function with a parallel team of sub-agents:
 
     TechnicalAgent  — Pure Python math on market signals (no LLM cost)
     SentimentAgent  — Mini OpenRouter call with a cheap model (Llama 3 8B)
@@ -292,17 +292,22 @@ async def run_synthesis(
 
     if premium:
         model = "anthropic/claude-3.5-sonnet"
+        max_tokens = 2000
         tier_instruction = (
-            "\nPREMIUM MODE: Provide a 3-paragraph deep-dive. Include exact entry/exit odds targets "
-            "and a precise position sizing recommendation in USDC."
+            "\nPREMIUM MODE: Provide a full 3-paragraph deep-dive analysis. "
+            "Include EXACT entry/exit odds targets (e.g. 'enter at 0.42, exit at 0.68'), "
+            "a precise position sizing recommendation in USDC based on the RiskAgent output, "
+            "and a specific probability estimate with reasoning (e.g. '72% chance YES resolves')."
         )
     else:
-        # Use an extremely cheap paid model to bypass strict concurrency rate limits on free OpenRouter endpoints
-        model = "meta-llama/llama-3.3-70b-instruct"
+        # Small cheap model for free tier — fast, low cost, deliberately limited detail
+        model = "meta-llama/llama-3.1-8b-instruct"
+        max_tokens = 600
         tier_instruction = (
-            "\nFREE MODE: Your analysis must be 'vaguely detailed'. Use sophisticated financial and analytical language to sound highly thorough and detailed, but remain entirely vague on actionable intelligence. "
-            "Discuss 'shifting momentum', 'building sentiment', and 'complex tech indicators' without giving away the actual specific numbers. Do not give exact odds, entry targets, or precise position sizing. "
-            "At the end, strongly encourage the user to unlock PREMIUM advice for the actual numbers, precise odds targets, deep-dive analysis, and position sizing."
+            "\nFREE MODE: Give a brief summary and a general plan direction only. "
+            "Do NOT include any specific numbers: no exact odds, no entry/exit targets, no precise position sizes, no probability percentages. "
+            "Use general directional language only (e.g. 'momentum is shifting upward', 'risk appears elevated'). "
+            "End with a clear call-to-action encouraging the user to unlock PREMIUM for exact numbers, deep-dive analysis, and precise sizing."
         )
 
     lang_instruction = "Respond entirely in English. Do NOT translate JSON keys."
@@ -363,7 +368,7 @@ Return ONLY valid JSON. The market_id field must be exactly: {market_id}
 
     payload = {
         "model":      model,
-        "max_tokens": 2000,   # must be high enough for full JSON + premium deep-dive
+        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": ADVICE_SYSTEM_PROMPT},
             *messages
