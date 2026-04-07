@@ -1,16 +1,35 @@
 'use client';
 import { useState } from 'react';
 import { useTelegram } from '@/hooks/useTelegram';
+import { useAuth } from '@/hooks/useAuth';
+import AuthRequiredModal from './AuthRequiredModal';
 
 export default function FeedCard({ data, index, onTrade }) {
   const { haptic } = useTelegram();
+  const { isAuthed, login } = useAuth();
   const delay = `d${(index % 6) + 1}`;
   const [copied, setCopied] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingSide, setPendingSide] = useState(null);
 
   const handleTrade = (side, e) => {
     e.stopPropagation();
     haptic.light();
+
+    if (!isAuthed) {
+      // Show contextual auth modal instead of silently passing to TradeModal
+      setPendingSide(side);
+      setShowAuthModal(true);
+      return;
+    }
+
     onTrade?.(data, side);
+  };
+
+  const handleLogin = () => {
+    login();
+    setShowAuthModal(false);
+    // After login the Privy modal opens; the user can come back and trade
   };
 
   const handleCopyId = (e) => {
@@ -21,7 +40,6 @@ export default function FeedCard({ data, index, onTrade }) {
       haptic.success?.();
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {
-      // Fallback for environments where clipboard API isn't available
       const el = document.createElement('textarea');
       el.value = data.id;
       el.style.position = 'fixed';
@@ -36,47 +54,63 @@ export default function FeedCard({ data, index, onTrade }) {
   };
 
   return (
-    <div className={`scard fu ${delay}`}>
-      <div className={`scard-bar ${data.status}`} />
+    <>
+      <div className={`scard fu ${delay}`}>
+        <div className={`scard-bar ${data.status}`} />
 
-      <div className="scard-inner">
-        {/* Meta */}
-        <div className="scard-meta">
-          <span className="scard-cat">{data.cat}</span>
-          <span className={`scard-heat ${data.status}`}>◆ {data.heat}</span>
-        </div>
-
-        {/* Question */}
-        <div className="scard-q">{data.q}</div>
-
-        {/* Odds bar */}
-        <div className="odds-wrap">
-          <div className="odds-bar-track">
-            <div className="odds-bar-fill" style={{ width: `${data.yes}%` }} />
+        <div className="scard-inner">
+          {/* Meta */}
+          <div className="scard-meta">
+            <span className="scard-cat">{data.cat}</span>
+            <span className={`scard-heat ${data.status}`}>◆ {data.heat}</span>
           </div>
-          <div className="odds-labels">
-            <span className="odds-yes">YES {data.yes}¢</span>
-            <span className="odds-vol">${data.vol} vol</span>
-            <span className="odds-no">NO {100 - data.yes}¢</span>
+
+          {/* Question */}
+          <div className="scard-q">{data.q}</div>
+
+          {/* Odds bar */}
+          <div className="odds-wrap">
+            <div className="odds-bar-track">
+              <div className="odds-bar-fill" style={{ width: `${data.yes}%` }} />
+            </div>
+            <div className="odds-labels">
+              <span className="odds-yes">YES {data.yes}¢</span>
+              <span className="odds-vol">${data.vol} vol</span>
+              <span className="odds-no">NO {100 - data.yes}¢</span>
+            </div>
           </div>
-        </div>
 
-        {/* Bet buttons */}
-        <div className="bet-row">
-          <button className="bet-btn" onClick={(e) => handleTrade('yes', e)}>▲ Bet YES</button>
-          <button className="bet-btn" onClick={(e) => handleTrade('no', e)}>▼ Bet NO</button>
-        </div>
+          {/* Bet buttons */}
+          <div className="bet-row">
+            <button className="bet-btn" onClick={(e) => handleTrade('yes', e)}>
+              ▲ Bet YES
+            </button>
+            <button className="bet-btn" onClick={(e) => handleTrade('no', e)}>
+              ▼ Bet NO
+            </button>
+          </div>
 
-        {/* Market ID copy button */}
-        <button
-          className={`market-id-btn ${copied ? 'copied' : ''}`}
-          onClick={handleCopyId}
-        >
-          <span className="market-id-label">ID</span>
-          <span className="market-id-value">{data.id}</span>
-          <span className="market-id-action">{copied ? '✓ Copied' : '⎘ Copy'}</span>
-        </button>
+          {/* Market ID copy button */}
+          <button
+            className={`market-id-btn ${copied ? 'copied' : ''}`}
+            onClick={handleCopyId}
+          >
+            <span className="market-id-label">ID</span>
+            <span className="market-id-value">{data.id}</span>
+            <span className="market-id-action">{copied ? '✓ Copied' : '⎘ Copy'}</span>
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* Auth prompt shown when unauthenticated user clicks Bet */}
+      {showAuthModal && (
+        <AuthRequiredModal
+          title="Connect to Trade"
+          message={`Connect your wallet to place a ${pendingSide?.toUpperCase()} trade on this market. You'll start with $1,000 paper USDC — no real funds needed.`}
+          onLogin={handleLogin}
+          onDismiss={() => setShowAuthModal(false)}
+        />
+      )}
+    </>
   );
 }
