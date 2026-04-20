@@ -16,10 +16,10 @@ from deep_translator import GoogleTranslator
 
 load_dotenv()
 
-from services.agent.orchestrator import run_orchestrator
-from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
-from services.agent.policies import check_policy
-from services.agent.executor import AutoTradeEngine
+from services.backend.core.orchestrator import run_orchestrator
+from services.backend.core.prompt_templates import ADVICE_SYSTEM_PROMPT
+from services.backend.core.policies import check_policy
+from services.backend.core.executor import AutoTradeEngine
 from services.backend.core.x402_verifier import has_premium_access, has_any_confirmed_payment, payment_required_payload
 from services.backend.data.database import engine
 from services.backend.data.models import Market, AISignal, AuditLog, Conversation
@@ -35,7 +35,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 # Tier Limits (defined at top so every endpoint can reference them)
 # ─────────────────────────────────────────────────────────────
 
-FREE_DAILY_LIMIT     = 10   # free users: 10 advice calls per day
+FREE_DAILY_LIMIT     = 10   # free users: 10 calls per 6-hour window (full batch reset)
 PREMIUM_HOURLY_LIMIT = 10   # premium users: 10 per hour (effectively unlimited for normal use)
 
 # ─────────────────────────────────────────────────────────────
@@ -216,24 +216,41 @@ def get_advice_usage(
     # Prefer the JWT-verified wallet over the raw query param
     effective_wallet = (current_user.get("wallet") or "").strip() or wallet_address.strip()
 
-    window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+    # Count BOTH advice + chat calls in the shared pool
+    window_start = datetime.now(timezone.utc) - timedelta(hours=6)
     with Session(engine) as session:
         all_logs = session.exec(
             select(AuditLog)
-            .where(AuditLog.action == "advice")
+            .where(AuditLog.action.in_(["advice", "chat"]))
             .where(AuditLog.created_at >= window_start)
         ).all()
         logs = [l for l in all_logs if (l.telegram_user_id or "").lower() == effective_wallet.lower()]
-    used_today = len(logs)
+
+    used = len(logs)
     is_premium = any(l.premium for l in logs)
     if not is_premium:
         is_premium = has_any_confirmed_payment(effective_wallet)
+
+    at_limit = (not is_premium) and (used >= FREE_DAILY_LIMIT)
+
+    # Compute the single moment when ALL 15 slots return (anchored to oldest call)
+    window_reset_at = None
+    if logs and at_limit:
+        oldest_ts = min(l.created_at for l in logs)
+        if oldest_ts.tzinfo is None:
+            oldest_ts = oldest_ts.replace(tzinfo=timezone.utc)
+        reset_utc      = oldest_ts + timedelta(minutes=5)  # TEST (prod: hours=6)
+        reset_eat      = reset_utc + timedelta(hours=3)
+        window_reset_at = reset_eat.strftime("%I:%M %p EAT").lstrip("0")
+
     return {
-        "wallet_address": effective_wallet,
-        "used_today":     used_today,
-        "daily_limit":    FREE_DAILY_LIMIT,
-        "is_premium":     is_premium,
-        "remaining":      max(0, FREE_DAILY_LIMIT - used_today) if not is_premium else None,
+        "wallet_address":   effective_wallet,
+        "used_recently":    used,
+        "refresh_limit":    FREE_DAILY_LIMIT,
+        "is_premium":       is_premium,
+        "at_limit":         at_limit,
+        "window_reset_at":  window_reset_at,   # "9:45 AM EAT" — when all 15 come back
+        "refresh_cycle":    "6h",
     }
 
 
@@ -472,24 +489,30 @@ def check_rate_limit(telegram_id: str, premium: bool = False) -> None:
     if premium:
         window_start = datetime.now(timezone.utc) - timedelta(hours=1)
         limit = PREMIUM_HOURLY_LIMIT
-        label = f"{PREMIUM_HOURLY_LIMIT} calls per hour"
     else:
-        window_start = datetime.now(timezone.utc) - timedelta(hours=24)
+        window_start = datetime.now(timezone.utc) - timedelta(minutes=5)  # TEST (prod: hours=6)
         limit = FREE_DAILY_LIMIT
-        label = f"{FREE_DAILY_LIMIT} free advice calls per day"
 
     with Session(engine) as session:
         all_logs = session.exec(
             select(AuditLog)
-            .where(AuditLog.action == "advice")
+            .where(AuditLog.action.in_(["advice", "chat"]))
             .where(AuditLog.created_at >= window_start)
         ).all()
         count = [l for l in all_logs if (l.telegram_user_id or "").lower() == telegram_id.lower()]
+
     if len(count) >= limit:
-        upgrade_hint = " Upgrade to Premium for unlimited advice." if not premium else ""
+        # Window resets 6h after the OLDEST call — full batch comes back at once
+        oldest_ts = min(l.created_at for l in count)
+        if oldest_ts.tzinfo is None:
+            oldest_ts = oldest_ts.replace(tzinfo=timezone.utc)
+        reset_at     = oldest_ts + (timedelta(hours=1) if premium else timedelta(minutes=5))  # TEST (prod: hours=6)
+        reset_at_eat = reset_at + timedelta(hours=3)
+        reset_str    = reset_at_eat.strftime("%I:%M %p EAT").lstrip("0")
+        upgrade_hint = " Upgrade to Premium for unlimited access." if not premium else ""
         raise HTTPException(
             status_code=429,
-            detail=f"Limit reached: {label}.{upgrade_hint}"
+            detail=f"Your limit will refresh at {reset_str}.{upgrade_hint}"
         )
 
 
@@ -689,7 +712,10 @@ async def get_advice(
         raise HTTPException(status_code=400, detail=policy["reason"])
 
     try:
-        if body_req.premium and not has_premium_access(effective_user_id, body_req.market_id):
+        # Gate: only block if the user has NO confirmed payment at all.
+        # has_any_confirmed_payment is the mirror of the auto-upgrade check above,
+        # so the two checks can never contradict each other.
+        if body_req.premium and not has_any_confirmed_payment(effective_user_id):
             return JSONResponse(
                 status_code=402,
                 content=payment_required_payload(body_req.market_id),

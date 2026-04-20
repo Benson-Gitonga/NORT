@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from services.backend.core.x402_verifier import verify_x402_payment
+from services.backend.core.x402_verifier import verify_x402_payment, GLOBAL_PAYMENT_SCOPE
 from services.backend.api.auth import get_current_user
 
 router = APIRouter(prefix="/x402", tags=["x402"])
@@ -15,6 +15,11 @@ class VerifyPaymentRequest(BaseModel):
     market_id: str | None = None
 
 
+class UpgradeRequest(BaseModel):
+    proof: str
+    wallet_address: str | None = None
+
+
 @router.post("/verify")
 async def verify_payment(request: VerifyPaymentRequest, current_user: dict = Depends(get_current_user)):
     telegram_id = request.telegram_id or request.user_id or request.wallet_address
@@ -24,11 +29,26 @@ async def verify_payment(request: VerifyPaymentRequest, current_user: dict = Dep
     if wallet and wallet.lower() != (telegram_id or "").lower():
         # Backend prefers the authoritative token wallet over the requested param
         telegram_id = wallet
-    
+
     return verify_x402_payment(
         proof=request.proof,
         telegram_id=telegram_id or "",
         market_id=request.market_id,
+    )
+
+
+@router.post("/upgrade")
+async def upgrade_to_premium(request: UpgradeRequest, current_user: dict = Depends(get_current_user)):
+    """
+    Global Premium upgrade — activates Premium for ALL markets for this wallet.
+    Called by PremiumGate.jsx when a user pastes a USDC tx hash (or 'demo').
+    market_id is always __global__ so one payment covers everything.
+    """
+    wallet = (current_user.get("wallet") or "").strip() or (request.wallet_address or "").strip()
+    return verify_x402_payment(
+        proof=request.proof,
+        telegram_id=wallet or "",
+        market_id=GLOBAL_PAYMENT_SCOPE,
     )
 
 

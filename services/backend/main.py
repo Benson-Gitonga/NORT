@@ -58,9 +58,20 @@ app = FastAPI(title="NORT Backend", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+ALLOWED_ORIGINS = [
+    # Production dashboard — update if your Vercel URL changes
+    "https://nort-landing-nine.vercel.app",
+    # Common Vercel preview URL pattern (covers branch deploys)
+    "https://nort-dashboard.vercel.app",
+    # Local dev
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://nort-landing-nine.vercel.app", "http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",   # all Vercel preview URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

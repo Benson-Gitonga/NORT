@@ -3,8 +3,11 @@ uvicorn          # The server to run FastAPI
 sqlmodel         # Combines SQLAlchemy and Pydantic for the database
 python-dotenv    # To manage your .env file
 httpx            # To fetch data from the Polymarket API
-tavily-python    # Tavily Search API (replaces DuckDuckGo)
+tavily-python    # Tavily Search API
 psycopg2-binary  # PostgreSQL driver for Neon
-langdetect       # Language detection for Kiswahili support (Phase Two)
+langdetect       # Language detection for Kiswahili support
 svix             # Webhook verification for Privy (whsec_ signing key)
 slowapi          # Rate limiting dependency
+PyJWT[crypto]    # JWT verification for Privy access tokens (RSA256)
+deep-translator  # Google Translate wrapper for Swahili support
+apscheduler      # Async job scheduler (market watch, alerts)
