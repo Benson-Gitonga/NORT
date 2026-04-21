@@ -7,3 +7,6 @@ tavily-python    # Tavily Search API (replaces DuckDuckGo)
 psycopg2-binary  # PostgreSQL driver for Neon
 svix             # Webhook verification for Privy (whsec_ signing key)
 slowapi          # Rate limiting dependency
+py-clob-client   # Polymarket CLOB client — EIP-712 order signing
+web3             # Ethereum / Polygon RPC calls (balance checks, tx verification)
+eth-account      # Wallet key generation + signing utilities
