@@ -11,8 +11,9 @@ from services.backend.api.advice import router as advice_router
 from services.backend.api.leaderboard import router as leaderboard_router
 from services.backend.api.fx import router as fx_router
 from services.backend.api.mode import router as mode_router
-from services.backend.api.bridge import router as bridge_router     # Phase 2
-from services.backend.api.pretium import router as pretium_router   # Phase 3
+from services.backend.api.bridge import router as bridge_router            # Phase 2
+from services.backend.api.pretium import router as pretium_router          # Phase 3
+from services.backend.api.real_trades import router as real_trades_router  # Phase 4
 from services.backend.api.telegram import router as telegram_router
 from services.backend.api.x402 import router as x402_router
 from services.backend.data.database import init_db, engine
@@ -54,29 +55,31 @@ app.add_middleware(
 
 # ─── ROUTERS ─────────────────────────────────────────────────────────────────
 app.include_router(markets_router)
-app.include_router(markets_router,     prefix="/api")
+app.include_router(markets_router,       prefix="/api")
 app.include_router(signals_router)
-app.include_router(signals_router,     prefix="/api")
+app.include_router(signals_router,       prefix="/api")
 app.include_router(trades_router)
-app.include_router(trades_router,      prefix="/api")
+app.include_router(trades_router,        prefix="/api")
 app.include_router(wallet_router)
-app.include_router(wallet_router,      prefix="/api")
+app.include_router(wallet_router,        prefix="/api")
 app.include_router(advice_router)
-app.include_router(advice_router,      prefix="/api")
+app.include_router(advice_router,        prefix="/api")
 app.include_router(telegram_router)
-app.include_router(telegram_router,    prefix="/api")
+app.include_router(telegram_router,      prefix="/api")
 app.include_router(x402_router)
-app.include_router(x402_router,        prefix="/api")
+app.include_router(x402_router,          prefix="/api")
 app.include_router(leaderboard_router)
-app.include_router(leaderboard_router, prefix="/api")
+app.include_router(leaderboard_router,   prefix="/api")
 app.include_router(fx_router)
-app.include_router(fx_router,          prefix="/api")
+app.include_router(fx_router,            prefix="/api")
 app.include_router(mode_router)
-app.include_router(mode_router,        prefix="/api")
-app.include_router(bridge_router)      # GET|POST /bridge/*
-app.include_router(bridge_router,      prefix="/api")   # /api/bridge/*
-app.include_router(pretium_router)      # GET|POST /pretium/*
-app.include_router(pretium_router,      prefix="/api")   # /api/pretium/*
+app.include_router(mode_router,          prefix="/api")
+app.include_router(bridge_router)
+app.include_router(bridge_router,        prefix="/api")
+app.include_router(pretium_router)
+app.include_router(pretium_router,       prefix="/api")
+app.include_router(real_trades_router)   # Phase 4 — real trading
+app.include_router(real_trades_router,   prefix="/api")
 
 
 @app.api_route("/", methods=["GET", "HEAD"])
