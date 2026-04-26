@@ -2,9 +2,10 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { getSignals } from '@/lib/api';
+import { getSignals, getWallet } from '@/lib/api';
 import { useTelegram } from '@/hooks/useTelegram';
 import AuthGate from '@/components/AuthGate';
+import Header from '@/components/Header';
 import FeedCard from '@/components/FeedCard';
 import Navbar from '@/components/Navbar';
 import TradeModal from '@/components/TradeModal';
@@ -12,8 +13,8 @@ import SkeletonCard from '@/components/SkeletonCard';
 
 const FILTERS   = ['all', 'hot', 'warm', 'cool'];
 const CATEGORIES = [
-  { id: 'crypto', label: '📈 Crypto' },
-  { id: 'sports', label: '🏆 Sports' },
+  { id: 'crypto', label: 'Crypto' },
+  { id: 'sports', label: 'Sports' },
 ];
 
 export default function FeedPage() {
@@ -25,10 +26,22 @@ export default function FeedPage() {
   const [tradeSignal, setTradeSignal] = useState(null);
   const [tradeSide, setTradeSide]     = useState('yes');
   const [toast, setToast]             = useState(null);
+  const [wallet, setWallet]           = useState({ balance: 0, pnl: 0, winRate: 0 });
 
+  // Fetch wallet balance from backend
+  useEffect(() => {
+    getWallet()
+      .then(setWallet)
+      .catch(() => {});
+  }, []);
+
+  // Fetch signals whenever filter or category changes
   useEffect(() => {
     setLoading(true);
-    getSignals(filter, category).then(setSignals).finally(() => setLoading(false));
+    getSignals(filter, category)
+      .then(setSignals)
+      .catch(() => setSignals([]))
+      .finally(() => setLoading(false));
   }, [filter, category]);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2200); };
@@ -39,25 +52,37 @@ export default function FeedPage() {
     <AuthGate softGate>
       <div className="app">
 
-        {/* ── Mobile-only header ── */}
-        <div className="header">
-          <div className="header-logo">NORT</div>
-          <div className="header-right">
-            <div className="live-pill"><span className="live-dot" />Live</div>
-            <Link href="/profile" className="user-av">{initials}</Link>
-          </div>
-        </div>
+        <Header hideLogo={true} />
 
-        {/* ── Main scroll area (mobile padding + desktop max-width) ── */}
         <div className="app-scroll">
-
-          {/* Desktop page title row */}
-          <div className="page-header">
-            <div>
-              <div className="page-title">Trending Signals</div>
-              <div className="page-meta">Updated just now · {signals.length} signals</div>
+          
+          {/* WALLET BALANCE CARD */}
+          <div className="wallet-balance-card">
+            <div className="wallet-card-left">
+              <div>
+                <div className="wallet-label">WALLET BALANCE:</div>
+                <div className="wallet-val-large">$ {wallet.balance.toLocaleString()}</div>
+              </div>
+              
+              <div className="wallet-stats-row">
+                <div className="wallet-stat-box">
+                  <div className="stat-box-label">Win Rate:</div>
+                  <div className="stat-box-val">{wallet.winRate}%</div>
+                </div>
+                <div className="wallet-stat-box">
+                  <div className="stat-box-label">P&L:</div>
+                  <div className="stat-box-val" style={{ color: '#34C07F' }}>
+                    + ${wallet.pnl.toLocaleString()}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="filter-row">
+          </div>
+
+          <div style={{ marginBottom: '24px' }}>
+            <div className="page-title" style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: '32px', letterSpacing: '-1px' }}>FEED</div>
+            
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
               {FILTERS.map(f => (
                 <button
                   key={f}
@@ -68,19 +93,19 @@ export default function FeedPage() {
                 </button>
               ))}
             </div>
-          </div>
 
-          {/* Crypto / Sports category toggle */}
-          <div className="cat-toggle-row fu d1">
-            {CATEGORIES.map(c => (
-              <button
-                key={c.id}
-                className={`cat-toggle-btn ${category === c.id ? 'active' : ''}`}
-                onClick={() => { setCategory(c.id); setFilter('all'); }}
-              >
-                {c.label}
-              </button>
-            ))}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+              {CATEGORIES.map(c => (
+                <button
+                  key={c.id}
+                  className={`filter-tab ${category === c.id ? 'on' : ''}`}
+                  style={{ borderRadius: '8px', padding: '6px 12px' }}
+                  onClick={() => setCategory(c.id)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Card grid */}
@@ -106,10 +131,8 @@ export default function FeedPage() {
           )}
         </div>
 
-        {/* Nav (bottom mobile / top desktop) */}
         <Navbar active="feed" />
 
-        {/* Modals */}
         {tradeSignal && (
           <TradeModal
             signal={tradeSignal}

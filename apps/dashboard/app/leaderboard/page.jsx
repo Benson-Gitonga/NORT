@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
+import Header from '@/components/Header';
 import { getLeaderboard, getMyRank } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { useTradingMode } from '@/components/TradingModeContext';
@@ -12,7 +13,7 @@ function PodiumCard({ entry, pos }) {
   return (
     <div className="podium-slot" style={{ order: pos === 0 ? 1 : pos === 1 ? 0 : 2 }}>
       <div className="podium-name">{entry.badge.emoji} {entry.display_name}</div>
-      <div className="podium-pnl" style={{ color: entry.net_pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+      <div className="podium-pnl" style={{ color: entry.net_pnl >= 0 ? '#34C07F' : '#F87171' }}>
         {entry.net_pnl >= 0 ? '+' : ''}{entry.net_pnl_pct.toFixed(1)}%
       </div>
       <div className="podium-bar" style={{ height: pos === 0 ? 120 : pos === 1 ? 80 : 60, background: RANK_COLORS[pos] }}>
@@ -32,11 +33,10 @@ function BadgePill({ badge }) {
 }
 
 function StreakFlame({ streak }) {
-  if (!streak) return <span style={{ color: 'var(--g3)', fontFamily: 'DM Mono, monospace', fontSize: 11 }}>--</span>;
+  if (!streak) return <span style={{ color: '#848282', fontFamily: 'DM Mono, monospace', fontSize: 11 }}>--</span>;
   return <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 11, color: '#f59e0b' }}>🔥 x{streak}</span>;
 }
 
-// ── Mode toggle pill ──────────────────────────────────────────────────────────
 function ModeTab({ label, active, color, onClick }) {
   return (
     <button
@@ -44,9 +44,9 @@ function ModeTab({ label, active, color, onClick }) {
       style={{
         padding:       '6px 16px',
         borderRadius:  20,
-        border:        `1.5px solid ${active ? color : 'var(--border)'}`,
+        border:        `1.5px solid ${active ? color : '#848282'}`,
         background:    active ? color + '18' : 'transparent',
-        color:         active ? color : 'var(--muted)',
+        color:         active ? color : '#848282',
         fontSize:      12,
         fontFamily:    'DM Mono, monospace',
         fontWeight:    active ? 700 : 400,
@@ -64,66 +64,53 @@ export default function LeaderboardPage() {
   const { walletAddress } = useAuth();
   const { mode: tradingMode } = useTradingMode();
 
-  // Default tab = user's current trading mode
   const [tab, setTab]         = useState(tradingMode || 'paper');
   const [board, setBoard]     = useState([]);
   const [myRank, setMyRank]   = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
 
-  // When user's trading mode changes, switch the default tab
-  useEffect(() => {
-    setTab(tradingMode || 'paper');
-  }, [tradingMode]);
-
+  // Fetch leaderboard + my rank whenever tab changes
   useEffect(() => {
     setLoading(true);
-    setError(null);
-    setBoard([]);
-    setMyRank(null);
-    Promise.all([
-      getLeaderboard(50, tab),
-      walletAddress ? getMyRank(walletAddress, tab) : Promise.resolve(null),
-    ])
-      .then(([lb, me]) => { setBoard(lb); setMyRank(me); })
-      .catch(e => setError(e.message))
+    getLeaderboard(50, tab)
+      .then(setBoard)
+      .catch(() => setBoard([]))
       .finally(() => setLoading(false));
+  }, [tab]);
+
+  useEffect(() => {
+    if (!walletAddress) return;
+    getMyRank(walletAddress, tab)
+      .then(setMyRank)
+      .catch(() => setMyRank(null));
   }, [walletAddress, tab]);
 
   const isReal     = tab === 'real';
   const showPodium = board.length >= 2;
   const top3       = board.slice(0, Math.min(3, board.length));
 
-  // Label the balance column correctly per mode
   const portfolioLabel = isReal ? 'USDC' : 'Portfolio';
 
   return (
-    <AuthGate>
+    <AuthGate softGate>
       <div className={`app${isReal ? ' real-mode' : ''}`}>
-        <div className="header">
-          <div className="header-logo">Leaderboard</div>
-          <div className="header-right">
-            <div className="live-pill"><span className="live-dot" />Live</div>
-          </div>
-        </div>
+        <Header title="RANKS" hideLogo={true} />
 
         <div className="app-scroll">
-          {/* ── Page header + mode toggle ── */}
-          <div className="page-header">
+          <div className="page-header" style={{ marginBottom: '32px' }}>
             <div>
-              <div className="page-title">
-                {isReal ? '⚡ Real Trading Ranks' : '◈ Paper Trading Ranks'}
+              <div className="page-title" style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: '32px', letterSpacing: '-1px' }}>
+                {isReal ? 'REAL RANKS' : 'PAPER RANKS'}
               </div>
               <div className="page-meta">
-                {loading ? 'Loading...' : `${board.length} trader${board.length !== 1 ? 's' : ''} — ranked by ${isReal ? 'real USDC balance' : 'portfolio value'}`}
+                {board.length} traders — ranked by {isReal ? 'real USDC balance' : 'portfolio value'}
               </div>
             </div>
-            {/* Mode tab toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
               <ModeTab
                 label="◈ Paper"
                 active={tab === 'paper'}
-                color="var(--teal)"
+                color="#34C07F"
                 onClick={() => setTab('paper')}
               />
               <ModeTab
@@ -135,22 +122,26 @@ export default function LeaderboardPage() {
             </div>
           </div>
 
-          {/* ── My Rank card ── */}
-          {myRank ? (
-            <div className="my-rank-card fu d1" style={{ borderColor: isReal ? 'rgba(245,158,11,0.3)' : undefined }}>
+          {myRank && (
+            <div className="card-opaque fu d1" style={{ 
+              borderRadius: '20px',
+              padding: '24px',
+              marginBottom: '32px',
+              borderColor: isReal ? '#F59E0B' : undefined 
+            }}>
               <div className="my-rank-left">
-                <div className="my-rank-num">#{myRank.rank}</div>
+                <div className="my-rank-num" style={{ fontSize: '32px', fontWeight: 800, fontFamily: 'Syne' }}>#{myRank.rank}</div>
                 <div>
-                  <div className="my-rank-name">You · {myRank.display_name}</div>
+                  <div className="my-rank-name" style={{ fontSize: '18px', fontWeight: 600 }}>You · {myRank.display_name}</div>
                   <BadgePill badge={myRank.badge} />
                 </div>
               </div>
               <div className="my-rank-stats">
                 <div className="my-stat">
-                  <div className="my-stat-val" style={{ color: myRank.net_pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                  <div className="my-stat-val" style={{ color: myRank.net_pnl >= 0 ? '#34C07F' : '#F87171' }}>
                     {myRank.net_pnl >= 0 ? '+' : ''}${myRank.net_pnl.toFixed(2)}
                   </div>
-                  <div className="my-stat-label">P&amp;L</div>
+                  <div className="my-stat-label">P&L</div>
                 </div>
                 <div className="my-stat">
                   <div className="my-stat-val">{myRank.win_rate}%</div>
@@ -165,95 +156,78 @@ export default function LeaderboardPage() {
                   <div className="my-stat-label">Streak</div>
                 </div>
               </div>
-              <div className="xp-bar-wrap">
-                <div className="xp-bar-track">
-                  <div className="xp-bar-fill" style={{ width: Math.min(100, (myRank.xp % 500) / 5) + '%' }} />
+              <div className="xp-bar-wrap" style={{ marginTop: '20px' }}>
+                <div className="xp-bar-track" style={{ background: 'rgba(255,255,255,0.05)', height: '6px', borderRadius: '100px' }}>
+                  <div className="xp-bar-fill" style={{ 
+                    background: '#34C07F', 
+                    width: Math.min(100, (myRank.xp % 500) / 5) + '%',
+                    height: '100%',
+                    borderRadius: '100px'
+                  }} />
                 </div>
-                <span className="xp-label">{myRank.xp % 500}/500 XP to next rank</span>
-              </div>
-            </div>
-          ) : !loading && walletAddress && (
-            <div className="my-rank-card fu d1" style={{ textAlign: 'center', padding: 20 }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>{isReal ? '⚡' : '🏆'}</div>
-              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>You're not ranked yet</div>
-              <div style={{ fontSize: 12, color: 'var(--g3)' }}>
-                {isReal
-                  ? 'Place your first real trade to appear on the board'
-                  : 'Place your first paper trade to appear on the board'}
+                <span className="xp-label" style={{ fontSize: '10px', color: '#848282', marginTop: '6px', display: 'block' }}>{myRank.xp % 500}/500 XP to next rank</span>
               </div>
             </div>
           )}
 
-          {/* ── Real mode notice ── */}
-          {isReal && !loading && board.length === 0 && (
-            <div className="empty fu d2">
-              <div className="empty-icon">⚡</div>
-              <div className="empty-text">No real trades yet — be the first real trader!</div>
-            </div>
-          )}
-
-          {error ? (
-            <div className="empty fu d2">
-              <div className="empty-icon">!</div>
-              <div className="empty-text">Failed to load: {error}</div>
-            </div>
-          ) : loading ? (
-            <div className="lb-table fu d3">
-              {[1,2,3,4,5].map(i => (
-                <div key={i} className="lb-row skeleton-row">
-                  <div className="skel-line w40" style={{ height: 10, borderRadius: 4 }} />
-                  <div className="skel-line w70" style={{ height: 10, borderRadius: 4 }} />
-                  <div className="skel-line w40" style={{ height: 10, borderRadius: 4 }} />
-                </div>
+          {showPodium && (
+            <div className="podium-wrap fu d2" style={{ marginBottom: '40px' }}>
+              {top3.map((entry, i) => (
+                <PodiumCard key={entry.telegram_user_id} entry={entry} pos={i} />
               ))}
             </div>
-          ) : board.length === 0 ? null : (
-            <>
-              {/* ── Podium ── */}
-              {showPodium && (
-                <div className="podium-wrap fu d2">
-                  {top3.map((entry, i) => (
-                    <PodiumCard key={entry.telegram_user_id} entry={entry} pos={i} />
-                  ))}
-                </div>
-              )}
-
-              {/* ── Full table ── */}
-              <div className="lb-table fu d3">
-                <div className="lb-table-header">
-                  <span>#</span>
-                  <span>Trader</span>
-                  <span className="lb-hide-sm">Trades</span>
-                  <span className="lb-hide-sm">Win Rate</span>
-                  <span className="lb-hide-sm">Streak</span>
-                  <span>P&amp;L</span>
-                  <span>{portfolioLabel}</span>
-                </div>
-                {board.map(entry => (
-                  <div
-                    key={entry.telegram_user_id}
-                    className={'lb-row' + (myRank?.telegram_user_id === entry.telegram_user_id ? ' lb-row-me' : '')}
-                    style={isReal ? { borderLeft: '2px solid rgba(245,158,11,0.2)' } : undefined}
-                  >
-                    <span className="lb-rank">{entry.rank}</span>
-                    <span className="lb-trader">
-                      <BadgePill badge={entry.badge} />
-                      <span className="lb-name">{entry.display_name}</span>
-                    </span>
-                    <span className="lb-hide-sm lb-mono">{entry.total_trades}</span>
-                    <span className="lb-hide-sm lb-mono">{entry.win_rate}%</span>
-                    <span className="lb-hide-sm"><StreakFlame streak={entry.streak} /></span>
-                    <span className="lb-mono" style={{ color: entry.net_pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {entry.net_pnl >= 0 ? '+' : ''}${entry.net_pnl.toFixed(0)}
-                    </span>
-                    <span className="lb-mono">
-                      ${(isReal ? entry.real_balance_usdc : entry.portfolio_value ?? 0).toFixed(isReal ? 2 : 0)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </>
           )}
+
+          <div className="card-opaque fu d3" style={{ borderRadius: '20px', overflow: 'hidden' }}>
+            <div className="lb-table-header" style={{ padding: '16px 20px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <span>#</span>
+              <span>Trader</span>
+              <span className="lb-hide-sm">Trades</span>
+              <span className="lb-hide-sm">Win Rate</span>
+              <span className="lb-hide-sm">Streak</span>
+              <span>P&L</span>
+              <span>{portfolioLabel}</span>
+            </div>
+            {loading ? (
+              [1,2,3,4,5].map(i => (
+                <div key={i} className="lb-row" style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <div className="skel-line w100" style={{ height: 14, borderRadius: 6 }} />
+                </div>
+              ))
+            ) : board.length === 0 ? (
+              <div className="empty" style={{ padding: '40px 20px' }}>
+                <div className="empty-icon">◇</div>
+                <div className="empty-text">No traders yet</div>
+              </div>
+            ) : (
+              board.map(entry => (
+                <div
+                  key={entry.telegram_user_id}
+                  className={'lb-row' + (myRank?.telegram_user_id === entry.telegram_user_id ? ' lb-row-me' : '')}
+                  style={{
+                    padding: '16px 20px',
+                    borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                    background: myRank?.telegram_user_id === entry.telegram_user_id ? 'radial-gradient(circle at 0% 0%, rgba(52, 192, 127, 1) 0%, rgba(0, 102, 255, 0.95) 25%, transparent 75%)' : 'transparent'
+                  }}
+                >
+                  <span className="lb-rank" style={{ fontWeight: 700 }}>{entry.rank}</span>
+                  <span className="lb-trader">
+                    <BadgePill badge={entry.badge} />
+                    <span className="lb-name" style={{ marginLeft: '8px' }}>{entry.display_name}</span>
+                  </span>
+                  <span className="lb-hide-sm lb-mono" style={{ opacity: 0.6 }}>{entry.total_trades}</span>
+                  <span className="lb-hide-sm lb-mono" style={{ opacity: 0.6 }}>{entry.win_rate}%</span>
+                  <span className="lb-hide-sm"><StreakFlame streak={entry.streak} /></span>
+                  <span className="lb-mono" style={{ color: entry.net_pnl >= 0 ? '#34C07F' : '#F87171' }}>
+                    {entry.net_pnl >= 0 ? '+' : ''}${entry.net_pnl.toFixed(0)}
+                  </span>
+                  <span className="lb-mono">
+                    ${(isReal ? 0 : entry.portfolio_value ?? 0).toFixed(isReal ? 2 : 0)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         <Navbar active="leaderboard" />

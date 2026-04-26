@@ -179,6 +179,7 @@ export default function Navbar({ active }) {
   const { user, isAuthed } = useAuth();
   const initials = user?.firstName?.slice(0, 2).toUpperCase() || 'NJ';
   const [showModeModal, setShowModeModal] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
 
   const {
     pendingRoute,
@@ -221,7 +222,7 @@ export default function Navbar({ active }) {
       {/* ── DESKTOP top nav ── */}
       <nav className="nav-desktop">
         <div className="nav-desktop-inner">
-          <Link href="/" className="nav-logo">NORT</Link>
+          <Link href="/" className="nav-logo" style={{ fontFamily: 'Syne', fontWeight: 800 }}>NORT</Link>
 
           <div className="nav-links">
             {NAV_ITEMS.filter(i => i.key !== 'profile').map(item => (
@@ -236,6 +237,15 @@ export default function Navbar({ active }) {
           </div>
 
           <div className="nav-right">
+            {/* Search Button */}
+            <button 
+              onClick={() => setShowSearch(true)}
+              className="nav-link"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+
             <ModePill onClick={() => setShowModeModal(true)} />
 
             <div className="live-pill">
@@ -243,7 +253,7 @@ export default function Navbar({ active }) {
               Live
             </div>
 
-            {/* Profile: guarded on desktop too */}
+            {/* Profile */}
             {isAuthed ? (
               <Link
                 href="/profile"
@@ -252,14 +262,15 @@ export default function Navbar({ active }) {
               >
                 <span style={{
                   width: 22, height: 22, borderRadius: '50%',
-                  background: active === 'profile' ? 'rgba(255,255,255,0.2)' : 'var(--black)',
-                  color: 'var(--white)', display: 'flex', alignItems: 'center',
+                  background: active === 'profile' ? '#34C07F' : '#1a1a1a',
+                  color: active === 'profile' ? '#000' : '#fff',
+                  border: '1px solid #34C07F',
+                  display: 'flex', alignItems: 'center',
                   justifyContent: 'center', fontSize: 9,
                   fontFamily: 'DM Mono, monospace', flexShrink: 0,
                 }}>
                   {initials}
                 </span>
-                Profile
               </Link>
             ) : (
               <button
@@ -277,12 +288,33 @@ export default function Navbar({ active }) {
                 }}>
                   ?
                 </span>
-                Sign In
               </button>
             )}
           </div>
         </div>
       </nav>
+
+      {/* ── Search Modal ── */}
+      {showSearch && (
+        <div className="search-modal-overlay" onClick={() => setShowSearch(false)}>
+          <div className="search-modal" onClick={e => e.stopPropagation()}>
+            <div className="search-input-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#848282" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input 
+                autoFocus
+                placeholder="Search signals, markets, traders..." 
+                className="search-input"
+                type="text"
+              />
+            </div>
+            <div className="search-results">
+              <div style={{ padding: '20px', textAlign: 'center', color: '#848282', fontSize: '13px' }}>
+                Type to search for active signals
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Mode toggle modal ── */}
       {showModeModal && <ModeToggleModal onClose={() => setShowModeModal(false)} />}

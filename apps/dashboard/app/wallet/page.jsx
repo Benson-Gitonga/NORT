@@ -5,6 +5,7 @@ import { useTelegram } from '@/hooks/useTelegram';
 import { useTradingMode } from '@/components/TradingModeContext';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
+import Header from '@/components/Header';
 import {
   getFullWallet,
   getPretiumRate,
@@ -72,7 +73,7 @@ export default function WalletPage() {
   useEffect(() => {
     getFullWallet()
       .then(setWallet)
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, []);
 
@@ -82,7 +83,7 @@ export default function WalletPage() {
       setHistoryLoading(true);
       getPretiumTransactions()
         .then(d => setTransactions(d.transactions || []))
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => setHistoryLoading(false));
     }
   }, [tab]);
@@ -93,7 +94,7 @@ export default function WalletPage() {
       setRateLoading(true);
       getPretiumRate()
         .then(setRate)
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => setRateLoading(false));
     }
   }, [tab]);
@@ -103,7 +104,7 @@ export default function WalletPage() {
     if (tab === 'withdraw') {
       getPretiumSettlementAddress()
         .then(d => setSettlementAddress(d.address || ''))
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [tab]);
 
@@ -115,9 +116,9 @@ export default function WalletPage() {
         const tx = await getPretiumTransaction(activeTx.transaction_id);
         setActiveTx(tx);
         if (TERMINAL.has(tx.status)) {
-          getFullWallet().then(setWallet).catch(() => {});
+          getFullWallet().then(setWallet).catch(() => { });
         }
-      } catch {}
+      } catch { }
     }, 5000);
     return () => clearInterval(interval);
   }, [activeTx]);
@@ -197,21 +198,11 @@ export default function WalletPage() {
   return (
     <AuthGate>
       <div className={`app${isReal ? ' real-mode' : ''}`}>
-        <div className="header">
-          <div className="header-logo">Wallet</div>
-          <div className="header-right">
-            <div className="live-pill" style={{ borderColor: isReal ? '#F59E0B' : undefined, color: isReal ? '#F59E0B' : undefined }}>
-              <span className="live-dot" style={{ background: isReal ? '#F59E0B' : undefined }} />
-              {isReal ? 'Real' : 'Paper'}
-            </div>
-          </div>
-        </div>
+        <Header title="WALLET" hideLogo={true} />
 
         <div className="scroll">
           {/* ── Balance Card ── */}
-          <div className="fu d1" style={{
-            background: 'var(--glass-bg)',
-            border: '1px solid var(--glass-border)',
+          <div className="card-opaque fu d1" style={{
             borderRadius: 'var(--r)',
             padding: '20px',
             textAlign: 'center',
@@ -232,15 +223,7 @@ export default function WalletPage() {
 
           {/* ── Tab Switcher ── */}
           {!activeTx && (
-            <div className="fu d2" style={{
-              display: 'flex',
-              gap: 4,
-              background: 'var(--glass-bg)',
-              border: '1px solid var(--glass-border)',
-              borderRadius: 'var(--rsm)',
-              padding: 4,
-              marginBottom: 12,
-            }}>
+            <div className="filter-row fu d2" style={{ marginBottom: 16 }}>
               {[
                 { key: 'deposit', label: 'Deposit' },
                 { key: 'withdraw', label: 'Withdraw' },
@@ -249,18 +232,11 @@ export default function WalletPage() {
                 <button
                   key={t.key}
                   onClick={() => { setTab(t.key); setAmount(''); setTxError(''); setTxHash(''); }}
+                  className={`filter-tab ${tab === t.key ? 'on' : ''}`}
                   style={{
                     flex: 1,
-                    padding: '10px 0',
-                    borderRadius: 8,
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    fontFamily: 'Plus Jakarta Sans, sans-serif',
-                    transition: 'all 0.2s',
-                    background: tab === t.key ? 'var(--teal-dim)' : 'transparent',
-                    color: tab === t.key ? 'var(--teal)' : 'var(--text-muted)',
+                    color: (tab === t.key && isReal) ? '#F59E0B' : undefined,
+                    borderColor: (tab === t.key && isReal) ? '#F59E0B' : undefined
                   }}
                 >
                   {t.label}
@@ -271,9 +247,7 @@ export default function WalletPage() {
 
           {/* ── Active Transaction View ── */}
           {activeTx && (
-            <div className="fu d3" style={{
-              background: 'var(--glass-bg)',
-              border: '1px solid var(--glass-border)',
+            <div className="card-opaque fu d3" style={{
               borderRadius: 'var(--r)',
               padding: 20,
               marginBottom: 12,
@@ -378,8 +352,9 @@ export default function WalletPage() {
           {!activeTx && tab === 'deposit' && (
             <div className="fu d3">
               <div style={{
-                background: 'var(--glass-bg)',
-                border: '1px solid var(--glass-border)',
+                background: '#0a0a0a',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
                 borderRadius: 'var(--r)',
                 padding: 16,
                 marginBottom: 12,
@@ -398,15 +373,20 @@ export default function WalletPage() {
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <div className="m-time-chips" style={{ marginTop: 8, marginBottom: 12 }}>
                   {[500, 1000, 2500, 5000].map(v => (
                     <button
                       key={v}
-                      className="chip-btn"
+                      className={`m-chip ${amount === String(v) ? 'on' : ''}`}
                       onClick={() => setAmount(String(v))}
-                      style={{ fontSize: 12, padding: '4px 10px' }}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        color: (amount === String(v) && isReal) ? '#F59E0B' : undefined,
+                        borderColor: (amount === String(v) && isReal) ? '#F59E0B' : undefined
+                      }}
                     >
-                      KES {v.toLocaleString()}
+                      {v.toLocaleString()}
                     </button>
                   ))}
                 </div>
@@ -449,7 +429,10 @@ export default function WalletPage() {
                   className="modal-cta"
                   onClick={handleDeposit}
                   disabled={txLoading || !amount || !phone.trim()}
-                  style={{ width: '100%', marginTop: 12 }}
+                  style={{
+                    width: '100%',
+                    marginTop: 12
+                  }}
                 >
                   {txLoading ? 'Processing...' : `Deposit KES ${Number(amount || 0).toLocaleString()}`}
                 </button>
@@ -465,8 +448,9 @@ export default function WalletPage() {
           {!activeTx && tab === 'withdraw' && (
             <div className="fu d3">
               <div style={{
-                background: 'var(--glass-bg)',
-                border: '1px solid var(--glass-border)',
+                background: '#0a0a0a',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
                 borderRadius: 'var(--r)',
                 padding: 16,
                 marginBottom: 12,
@@ -485,23 +469,35 @@ export default function WalletPage() {
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <div className="m-time-chips" style={{ marginTop: 8, marginBottom: 12 }}>
                   {[5, 10, 25, 50].map(v => (
                     <button
                       key={v}
-                      className="chip-btn"
+                      className={`m-chip ${amount === String(v) ? 'on' : ''}`}
                       onClick={() => setAmount(String(v))}
                       disabled={v > realBalance}
-                      style={{ fontSize: 12, padding: '4px 10px', opacity: v > realBalance ? 0.4 : 1 }}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        opacity: v > realBalance ? 0.3 : 1,
+                        color: (amount === String(v) && isReal) ? '#F59E0B' : undefined,
+                        borderColor: (amount === String(v) && isReal) ? '#F59E0B' : undefined
+                      }}
                     >
                       ${v}
                     </button>
                   ))}
                   <button
-                    className="chip-btn"
+                    className={`m-chip ${amount === String(realBalance) ? 'on' : ''}`}
                     onClick={() => setAmount(String(realBalance))}
                     disabled={realBalance <= 0}
-                    style={{ fontSize: 12, padding: '4px 10px', opacity: realBalance <= 0 ? 0.4 : 1 }}
+                    style={{
+                      flex: 1,
+                      textAlign: 'center',
+                      opacity: realBalance <= 0 ? 0.3 : 1,
+                      color: (amount === String(realBalance) && isReal) ? '#F59E0B' : undefined,
+                      borderColor: (amount === String(realBalance) && isReal) ? '#F59E0B' : undefined
+                    }}
                   >
                     Max
                   </button>
@@ -583,7 +579,10 @@ export default function WalletPage() {
                   className="modal-cta"
                   onClick={handleWithdraw}
                   disabled={txLoading || !amount || !phone.trim() || !txHash.trim()}
-                  style={{ width: '100%', marginTop: 12 }}
+                  style={{
+                    width: '100%',
+                    marginTop: 12
+                  }}
                 >
                   {txLoading ? 'Processing...' : `Withdraw $${Number(amount || 0).toFixed(2)} USDC`}
                 </button>
@@ -606,9 +605,8 @@ export default function WalletPage() {
                   {transactions.map(tx => (
                     <div
                       key={tx.transaction_id}
+                      className="card-opaque"
                       style={{
-                        background: 'var(--glass-bg)',
-                        border: '1px solid var(--glass-border)',
                         borderRadius: 'var(--rsm)',
                         padding: '12px 14px',
                         display: 'flex',

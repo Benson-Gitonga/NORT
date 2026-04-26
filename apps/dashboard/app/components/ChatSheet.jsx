@@ -8,7 +8,7 @@ import LoginPrompt from './LoginPrompt';
 const INIT_MSG = {
   id: 'init',
   role: 'ai',
-  text: 'Hey — I\'m OpenClaw. Ask me anything about this market.',
+  text: 'Hey — I\'m NORTBOT. Ask me anything about this market.',
 };
 
 export default function ChatSheet({ signal, onClose }) {
@@ -84,8 +84,7 @@ export default function ChatSheet({ signal, onClose }) {
       <div className="chat-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="chat-header">
           <div className="chat-title">
-            <span className="ai-dot" />
-            OpenClaw
+            NORTBOT
             <span className="chat-badge">{gated ? 'PREMIUM' : 'FREE'}</span>
           </div>
           <button className="chat-close" onClick={onClose}>✕</button>

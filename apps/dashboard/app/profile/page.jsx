@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTelegram } from '@/hooks/useTelegram';
 import { useTradingMode } from '@/components/TradingModeContext';
-import AuthGate from '@/components/AuthGate';
+import Header from '@/components/Header';
 import Navbar from '@/components/Navbar';
 import Link from 'next/link';
 import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE } from '@/lib/api';
@@ -97,15 +97,7 @@ export default function ProfilePage() {
   return (
     <AuthGate>
       <div className={`app${isReal ? ' real-mode' : ''}`}>
-        <div className="header">
-          <div className="header-logo">Profile</div>
-          <div className="header-right">
-            <div className="live-pill" style={{ borderColor: isReal ? '#F59E0B' : undefined, color: isReal ? '#F59E0B' : undefined }}>
-              <span className="live-dot" style={{ background: isReal ? '#F59E0B' : undefined }} />
-              {isReal ? 'Real' : 'Paper'}
-            </div>
-          </div>
-        </div>
+        <Header title="PROFILE" hideLogo={true} />
 
         <div className="scroll">
           {/* ── Avatar + Name ── */}

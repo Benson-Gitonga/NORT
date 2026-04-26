@@ -20,7 +20,6 @@ export default function AuthGate({ children, softGate = false }) {
     return (
       <div className="auth-screen">
         <div className="auth-logo">NORT</div>
-        <div className="auth-sub">Loading...</div>
       </div>
     );
   }
@@ -33,14 +32,10 @@ export default function AuthGate({ children, softGate = false }) {
     return (
       <div className="auth-screen">
         <div className="auth-logo">NORT</div>
-        <div className="auth-sub">
-          AI-powered prediction market signals.<br />
-          Connect your wallet to start trading.
-        </div>
-        <button className="auth-btn outline" onClick={login}>
+        <button className="auth-btn outline" onClick={login} style={{ marginTop: 32 }}>
           Connect Wallet
         </button>
-        <div style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: 'var(--g3)', textAlign: 'center', lineHeight: 1.6 }}>
+        <div style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: '#fff', textAlign: 'center', lineHeight: 1.6, opacity: 0.5 }}>
           Paper trades only · No real funds at risk
         </div>
       </div>

@@ -75,10 +75,9 @@ export default function GlobalChatButton() {
       {/* P-CHAT PANEL: Slides up from the FAB when open */}
       {open && (
         <div className="gchat-panel">
-          <div className="gchat-header">
+          <div className="chat-header">
             <div className="chat-title">
-              <span className="ai-dot" />
-              OpenClaw
+              NORTBOT
               <span className="chat-badge">GLOBAL</span>
             </div>
             <button className="chat-close" onClick={() => setOpen(false)}>✕</button>
