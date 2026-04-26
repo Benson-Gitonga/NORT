@@ -15,13 +15,22 @@ export async function authFetch(endpoint, options = {}) {
   
   // Only attempt to get token client-side
   if (typeof window !== 'undefined') {
-    try {
-      const token = await getAccessToken();
-      if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
+    let token = null;
+    // Retry poller: Privy's global getAccessToken can randomly return null during rapid mount hydration
+    for (let i = 0; i < 4; i++) {
+      try {
+        token = await getAccessToken();
+        if (token) break;
+      } catch (e) {
+        // silent
       }
-    } catch (e) {
-      console.warn("Could not retrieve Privy token", e);
+      await new Promise(r => setTimeout(r, 250));
+    }
+    
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    } else {
+      console.warn("[authFetch] Failed to retrieve Privy token after retries. Proceeding without Authorization header.");
     }
   }
 
