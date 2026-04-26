@@ -2,63 +2,51 @@
 /**
  * AuthGate — client-side route protection.
  *
+ * Deliberately avoids useRouter / usePathname at module level.
+ * Those hooks can fail if the component mounts before the Next.js
+ * router context is ready (e.g. during Privy's lazy-load window),
+ * which caused the "AuthGate is not defined" runtime error.
+ *
+ * Instead we read window.location directly — always available,
+ * no context dependency, no hydration timing issues.
+ *
  * TWO MODES:
- *
- * <AuthGate>
- *   Hard gate. User must be authenticated to see ANY content.
- *   While Privy initialises  → spinner (prevents flash of protected content)
- *   Not authenticated        → redirects to /login?from=<current path>
- *   Authenticated            → renders children
- *
- * <AuthGate softGate>
- *   Soft gate. Content is visible to everyone (good for feed, signals).
- *   Protected ACTIONS use useAuthGuard() / AuthRequiredModal inline.
- *   Always renders children immediately.
- *
- * WHY BOTH:
- *   Hard gate is for pages like /trade /wallet /profile where even
- *   seeing the shell leaks user data.
- *   Soft gate is for pages like the feed where public browsing is fine
- *   but placing a trade requires login.
+ *   <AuthGate>          Hard gate — must be logged in to see content.
+ *   <AuthGate softGate> Soft gate — content visible, actions protected.
  */
-import { useEffect } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTelegram } from '@/hooks/useTelegram';
 
 export default function AuthGate({ children, softGate = false }) {
-  const { ready: privyReady, isAuthed, login } = useAuth();
-  const { user: tgUser, ready: tgReady }       = useTelegram();
-  const router   = useRouter();
-  const pathname = usePathname();
+  const { ready: privyReady, isAuthed } = useAuth();
+  const { user: tgUser, ready: tgReady } = useTelegram();
+  const [redirected, setRedirected] = useState(false);
 
   const isReady  = privyReady && tgReady;
   const loggedIn = isAuthed || !!tgUser;
 
-  // Hard gate: redirect to /login once we know the user is NOT logged in.
-  // We wait for isReady so we don't redirect during Privy initialisation.
+  // Hard gate redirect — runs after mount, no router context needed
   useEffect(() => {
-    if (!softGate && isReady && !loggedIn) {
-      router.replace(`/login?from=${encodeURIComponent(pathname)}`);
-    }
-  }, [softGate, isReady, loggedIn, router, pathname]);
+    if (softGate || !isReady || loggedIn || redirected) return;
+    setRedirected(true);
+    const from = encodeURIComponent(window.location.pathname);
+    window.location.replace(`/login?from=${from}`);
+  }, [softGate, isReady, loggedIn, redirected]);
 
-  // ── Soft gate: always render — protected actions handled inline ──────────
+  // Soft gate — always render children, actions protected inline
   if (softGate) return <>{children}</>;
 
-  // ── Hard gate ────────────────────────────────────────────────────────────
-
-  // Still initialising — show branded spinner, never blank/broken page
+  // Still initialising
   if (!isReady) {
     return (
       <div className="auth-screen">
         <div className="auth-logo">NORT</div>
         <div style={{
-          fontSize:   11,
+          fontSize: 11,
           fontFamily: "'DM Mono', monospace",
-          color:      'rgba(255,255,255,0.35)',
-          marginTop:  12,
-          animation:  'pulse 1.5s ease-in-out infinite',
+          color: 'rgba(255,255,255,0.35)',
+          marginTop: 12,
         }}>
           Loading…
         </div>
@@ -66,8 +54,7 @@ export default function AuthGate({ children, softGate = false }) {
     );
   }
 
-  // Not logged in → blank screen while redirect is in flight
-  // (avoids brief flash of protected content before router.replace fires)
+  // Not logged in — blank screen while window.location.replace fires
   if (!loggedIn) {
     return (
       <div className="auth-screen">
