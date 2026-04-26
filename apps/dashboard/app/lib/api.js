@@ -39,22 +39,28 @@ export async function authFetch(endpoint, options = {}) {
 
   let res = await fetch(endpoint, { ...options, headers });
   
+  // 1-time retry logic for hydration misses
   if (res.status === 401) {
-    console.error(`[authFetch] 401 Unauthorized on ${endpoint}`);
-    console.error(`[authFetch] Was token sent?`, headers.has('Authorization'));
-    if (typeof window !== 'undefined' && window.__DEBUG_TOKEN) {
-        console.error(`[authFetch COPY FOR POSTMAN] cURL command:\ncurl -X GET "${endpoint}" -H "Authorization: Bearer ${window.__DEBUG_TOKEN}"`);
-    }
+    console.warn(`[authFetch] 401 Unauthorized on ${endpoint}, checking for stale token...`);
     
-    console.warn(`[authFetch] Retrying in 1.5s...`);
-    await new Promise(r => setTimeout(r, 1500));
+    // give Privy exactly 1 attempt to provide a fresh token
+    await new Promise(r => setTimeout(r, 500));
     try {
       if (typeof window !== 'undefined') {
         const freshToken = await getAccessToken();
         if (freshToken) headers.set('Authorization', `Bearer ${freshToken}`);
       }
     } catch {}
+    
     res = await fetch(endpoint, { ...options, headers });
+
+    // If it STILL fails, the session is dead or backend is blocking it.
+    if (res.status === 401) {
+      console.error(`[authFetch] FATAL 401 Unauthorized. Dispatching session_expired event.`);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('session_expired'));
+      }
+    }
   }
   
   return res;
