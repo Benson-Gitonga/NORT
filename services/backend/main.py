@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,9 +46,21 @@ app = FastAPI(title="NORT Backend", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Core origins always allowed. Add extras via CORS_ORIGINS env var (comma-separated).
+_CORE_ORIGINS = [
+    "https://www.nortapp.online",           # production (www)
+    "https://nortapp.online",               # production (apex — no www)
+    "https://nort-landing-nine.vercel.app", # external landing page
+    "http://localhost:3000",                # local dev
+    "http://localhost:3001",                # local dev alt port
+]
+_extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+ALLOWED_ORIGINS = list(dict.fromkeys(_CORE_ORIGINS + _extra))  # dedup, preserve order
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://nort-landing-nine.vercel.app", "http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
