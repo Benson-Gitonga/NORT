@@ -1,85 +1,100 @@
 'use client';
-import { useEffect, useRef } from 'react';
+/**
+ * /login — Wallet connect entry point.
+ *
+ * IMPORTANT: useSearchParams() requires a Suspense boundary in Next.js App Router.
+ * Without it the build throws:
+ *   "useSearchParams() should be wrapped in a suspense boundary"
+ * We split into LoginPageInner (reads params) + a Suspense wrapper as the export.
+ *
+ * Behaviour:
+ *   1. Already authenticated → redirect to ?from= path or /
+ *   2. Not authenticated → auto-open Privy modal after 300ms
+ *   3. After successful login → redirect to ?from= path or /
+ *   4. User can click the button if they dismissed the modal
+ */
+import { Suspense, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 
-/**
- * /login — Entry point for wallet connection.
- *
- * Behaviour:
- * 1. If already authenticated → redirect to 'from' param or '/'
- * 2. If not authenticated → auto-open Privy wallet modal
- * 3. After successful login → redirect to 'from' param or '/'
- * 4. User can also manually click the button if modal was dismissed
- *
- * The middleware sends unauthenticated users here (with ?from=<intended path>)
- * instead of directly to the landing page, so the auth flow is clear.
- */
-export default function LoginPage() {
+// ─── Inner component (safe to use useSearchParams here inside Suspense) ──────
+function LoginPageInner() {
   const { ready, isAuthed, login } = useAuth();
-  const router = useRouter();
+  const router       = useRouter();
   const searchParams = useSearchParams();
-  const from = searchParams?.get('from') || '/';
-  const didAutoOpen = useRef(false);
+  const from         = searchParams?.get('from') || '/';
+  const didAutoOpen  = useRef(false);
 
-  // Redirect if already logged in
+  // If already authenticated, go straight to destination
   useEffect(() => {
     if (ready && isAuthed) {
       router.replace(from);
     }
   }, [ready, isAuthed, from, router]);
 
-  // Auto-open Privy modal once Privy is ready and user is not authed
+  // Auto-open Privy modal once, 300ms after mount
   useEffect(() => {
     if (!ready || isAuthed || didAutoOpen.current) return;
     didAutoOpen.current = true;
-    // Small delay so the page renders before the modal pops
-    const t = setTimeout(() => { login(); }, 300);
+    const t = setTimeout(() => login(), 300);
     return () => clearTimeout(t);
   }, [ready, isAuthed, login]);
 
-  // After login, redirect back
-  useEffect(() => {
-    if (ready && isAuthed) {
-      router.replace(from);
-    }
-  }, [isAuthed, ready, from, router]);
+  // Human-readable destination name shown in the sub-copy
+  const DEST_LABELS = {
+    '/trade':        'My Bets',
+    '/wallet':       'Wallet',
+    '/profile':      'Profile',
+    '/achievements': 'Achievements',
+    '/signals':      'Signals',
+    '/market':       'Market',
+    '/overview':     'Overview',
+  };
+  const destKey   = Object.keys(DEST_LABELS).find(k => from.startsWith(k));
+  const destLabel = destKey ? DEST_LABELS[destKey] : null;
 
   return (
     <div className="auth-screen">
       {/* Logo */}
       <div className="auth-logo">NORT</div>
 
-      {/* Tagline */}
-      <div className="auth-sub" style={{ maxWidth: 280, lineHeight: 1.6 }}>
-        AI-powered prediction market signals.<br />
-        Connect your wallet to start trading.
-      </div>
+      {/* Context-aware sub-copy */}
+      {destLabel ? (
+        <div className="auth-sub" style={{ maxWidth: 280, lineHeight: 1.6 }}>
+          Connect your wallet to access&nbsp;
+          <strong style={{ color: 'var(--teal, #00f2ff)' }}>{destLabel}</strong>.
+        </div>
+      ) : (
+        <div className="auth-sub" style={{ maxWidth: 280, lineHeight: 1.6 }}>
+          AI-powered prediction market signals.<br />
+          Connect your wallet to start trading.
+        </div>
+      )}
 
       {/* Feature bullets */}
       <div style={{
         display:       'flex',
         flexDirection: 'column',
         gap:           8,
-        margin:        '24px 0',
+        margin:        '20px 0',
         padding:       '16px 20px',
-        background:    'var(--glass-bg)',
-        border:        '1px solid var(--glass-border)',
+        background:    'var(--glass-bg, rgba(255,255,255,0.04))',
+        border:        '1px solid var(--glass-border, rgba(255,255,255,0.08))',
         borderRadius:  12,
         width:         '100%',
         maxWidth:      280,
         textAlign:     'left',
         fontSize:      12,
         fontFamily:    "'DM Mono', monospace",
-        color:         'var(--text-secondary)',
+        color:         'var(--text-secondary, rgba(255,255,255,0.6))',
       }}>
         <div>✦ $1,000 paper USDC to start</div>
         <div>✦ AI-powered trade signals</div>
-        <div>✦ Leaderboard & achievements</div>
+        <div>✦ Leaderboard &amp; achievements</div>
         <div>✦ Real wallet, zero real risk</div>
       </div>
 
-      {/* CTA — in case the Privy modal was dismissed */}
+      {/* Manual CTA — shown if Privy modal was dismissed */}
       {ready && !isAuthed && (
         <button
           className="auth-btn outline"
@@ -90,16 +105,27 @@ export default function LoginPage() {
         </button>
       )}
 
+      {/* Loading state while Privy initialises */}
+      {!ready && (
+        <div style={{
+          fontSize:   12,
+          fontFamily: "'DM Mono', monospace",
+          color:      'rgba(255,255,255,0.4)',
+          marginTop:  12,
+        }}>
+          Loading…
+        </div>
+      )}
+
       {/* Back to landing */}
       <a
         href="https://nort-landing-nine.vercel.app"
         style={{
-          marginTop:  16,
-          fontSize:   11,
-          fontFamily: "'DM Mono', monospace",
-          color:      'var(--text-muted)',
+          marginTop:      20,
+          fontSize:       11,
+          fontFamily:     "'DM Mono', monospace",
+          color:          'rgba(255,255,255,0.4)',
           textDecoration: 'none',
-          opacity:    0.7,
         }}
       >
         ← Back to home
@@ -107,10 +133,10 @@ export default function LoginPage() {
 
       {/* Disclaimer */}
       <div style={{
-        marginTop:  20,
+        marginTop:  16,
         fontSize:   10,
         fontFamily: "'DM Mono', monospace",
-        color:      'var(--text-muted)',
+        color:      'rgba(255,255,255,0.3)',
         textAlign:  'center',
         lineHeight: 1.6,
         maxWidth:   260,
@@ -119,5 +145,18 @@ export default function LoginPage() {
         Powered by Privy · Base network
       </div>
     </div>
+  );
+}
+
+// ─── Exported page — MUST wrap in Suspense for useSearchParams ────────────────
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="auth-screen">
+        <div className="auth-logo">NORT</div>
+      </div>
+    }>
+      <LoginPageInner />
+    </Suspense>
   );
 }
