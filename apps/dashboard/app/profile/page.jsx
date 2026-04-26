@@ -6,10 +6,11 @@ import { useTradingMode } from '@/components/TradingModeContext';
 import Header from '@/components/Header';
 import Navbar from '@/components/Navbar';
 import Link from 'next/link';
+import AuthGate from '@/components/AuthGate';
 import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE } from '@/lib/api';
 
 export default function ProfilePage() {
-  const { user, walletAddress, logout } = useAuth();
+  const { user, walletAddress, logout, isLoggingOut } = useAuth();
   const { haptic } = useTelegram();
   const { mode } = useTradingMode();
   const isReal = mode === 'real';
@@ -45,6 +46,7 @@ export default function ProfilePage() {
   }, [walletAddress]);
 
   useEffect(() => {
+    if (!walletAddress) return;
     Promise.all([getFullWallet(), getTrades(), getUserStats(), getBridgeHistory(), getPretiumTransactions(null, 5)])
       .then(([w, t, s, b, f]) => {
         setWallet(w);
@@ -55,7 +57,7 @@ export default function ProfilePage() {
       })
       .catch(console.warn)
       .finally(() => setLoading(false));
-  }, []);
+  }, [walletAddress]);
 
   const saveUsername = async () => {
     if (!newUsername.trim() || !walletAddress) return;
@@ -314,10 +316,11 @@ export default function ProfilePage() {
             </>
           )}
 
-          {/* ── Logout ── */}
           <div className="settings-group fu d9" style={{ marginTop: 8 }}>
-            <button className="settings-btn danger" onClick={() => { haptic?.medium?.(); logout(); }}
-              style={{ width: '100%', padding: '16px', fontSize: '14px' }}>Log Out</button>
+            <button className="settings-btn danger" disabled={isLoggingOut} onClick={() => { haptic?.medium?.(); logout(); }}
+              style={{ width: '100%', padding: '16px', fontSize: '14px', opacity: isLoggingOut ? 0.7 : 1 }}>
+              {isLoggingOut ? 'Logging Out...' : 'Log Out'}
+            </button>
           </div>
 
           <div className="profile-disclaimer fu d10">

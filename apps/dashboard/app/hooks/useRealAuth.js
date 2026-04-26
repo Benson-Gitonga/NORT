@@ -19,6 +19,7 @@ export function useRealAuth() {
 
   const [initialized, setInitialized] = useState(false);
   const [chainSwitchError, setChainSwitchError] = useState(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => { setInitialized(true); }, []);
 
@@ -79,12 +80,18 @@ export function useRealAuth() {
     !!privyReady && initialized && (!!authenticated || !!tgUser);
 
   const logout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    
     try { await privyLogout(); } catch {}
+    
     try {
       window.localStorage.removeItem("walletAddress");
       window.localStorage.removeItem("nort_auth");
       window.localStorage.removeItem("nort_username");
+      window.sessionStorage.clear();
     } catch {}
+    
     window.location.href = "/";
   };
 
@@ -142,5 +149,6 @@ export function useRealAuth() {
     switchToBase:    () => switchToBase(activeWallet),
     login:           privyLogin,
     logout,
+    isLoggingOut,
   };
 }
