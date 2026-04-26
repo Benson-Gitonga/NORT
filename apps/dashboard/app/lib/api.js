@@ -29,16 +29,24 @@ export async function authFetch(endpoint, options = {}) {
     
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
+      // ADDED FOR POSTMAN DEBUGGING:
+      console.log(`[DEBUG] Token found! For Postman, use Header:\nAuthorization: Bearer ${token.substring(0, 30)}...`);
+      if (typeof window !== 'undefined') window.__DEBUG_TOKEN = token;
     } else {
-      console.warn("[authFetch] Failed to retrieve Privy token after retries. Proceeding without Authorization header.");
+      console.error("[authFetch] Failed to retrieve Privy token. Token evaluated to null/undefined.");
     }
   }
 
   let res = await fetch(endpoint, { ...options, headers });
   
-  // If backend returns 401, it is almost certainly Privy rate limiting the python server (since we sent a token)
   if (res.status === 401) {
-    console.warn(`[authFetch] 401 on ${endpoint}, retrying in 1.5s...`);
+    console.error(`[authFetch] 401 Unauthorized on ${endpoint}`);
+    console.error(`[authFetch] Was token sent?`, headers.has('Authorization'));
+    if (typeof window !== 'undefined' && window.__DEBUG_TOKEN) {
+        console.error(`[authFetch COPY FOR POSTMAN] cURL command:\ncurl -X GET "${endpoint}" -H "Authorization: Bearer ${window.__DEBUG_TOKEN}"`);
+    }
+    
+    console.warn(`[authFetch] Retrying in 1.5s...`);
     await new Promise(r => setTimeout(r, 1500));
     try {
       if (typeof window !== 'undefined') {
