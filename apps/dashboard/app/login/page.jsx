@@ -41,7 +41,7 @@ function LoginPageInner() {
   }, [ready, isAuthed, login]);
 
   // Human-readable destination name shown in the sub-copy
-  const DEST_LABELS: Record<string, string> = {
+  const DEST_LABELS = {
     '/trade':        'My Bets',
     '/wallet':       'Wallet',
     '/profile':      'Profile',
@@ -50,7 +50,7 @@ function LoginPageInner() {
     '/market':       'Market',
     '/overview':     'Overview',
   };
-  const destKey = Object.keys(DEST_LABELS).find(k => from.startsWith(k));
+  const destKey   = Object.keys(DEST_LABELS).find(k => from.startsWith(k));
   const destLabel = destKey ? DEST_LABELS[destKey] : null;
 
   return (
