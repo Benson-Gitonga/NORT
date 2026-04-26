@@ -22,20 +22,42 @@ export default function AuthGate({ children, softGate = false }) {
   const { ready: privyReady, isAuthed } = useAuth();
   const { user: tgUser, ready: tgReady } = useTelegram();
   const [redirected, setRedirected] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const isReady  = privyReady && tgReady;
   const loggedIn = isAuthed || !!tgUser;
 
+  // Listen for fatal 401 events globally
+  useEffect(() => {
+    const handleExpired = () => setSessionExpired(true);
+    window.addEventListener('session_expired', handleExpired);
+    return () => window.removeEventListener('session_expired', handleExpired);
+  }, []);
+
   // Hard gate redirect — runs after mount, no router context needed
   useEffect(() => {
-    if (softGate || !isReady || loggedIn || redirected) return;
+    if (softGate || !isReady || loggedIn || redirected || sessionExpired) return;
     setRedirected(true);
     const from = encodeURIComponent(window.location.pathname);
     window.location.replace(`/login?from=${from}`);
-  }, [softGate, isReady, loggedIn, redirected]);
+  }, [softGate, isReady, loggedIn, redirected, sessionExpired]);
 
   // Soft gate — always render children, actions protected inline
   if (softGate) return <>{children}</>;
+
+  // Session expired UX lockout
+  if (sessionExpired) {
+    return (
+      <div className="auth-screen" style={{ flexDirection: 'column', padding: 20, textAlign: 'center' }}>
+        <div className="auth-logo" style={{ marginBottom: 20 }}>NORT</div>
+        <h3 style={{ color: 'var(--red)', fontSize: 18, marginBottom: 10 }}>Session Expired</h3>
+        <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
+          Your authentication token was rejected by the server. Please reconnect your wallet.
+        </p>
+        <button className="settings-btn" onClick={() => window.location.href = "/"}>Reconnect Wallet</button>
+      </div>
+    );
+  }
 
   // Still initialising
   if (!isReady) {
