@@ -47,16 +47,23 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!walletAddress) return;
-    Promise.all([getFullWallet(), getTrades(), getUserStats(), getBridgeHistory(), getPretiumTransactions(null, 5)])
-      .then(([w, t, s, b, f]) => {
-        setWallet(w);
-        setTrades(t);
-        setStats(s);
-        setBridges(b.bridges || []);
-        setPretiumTxs(f.transactions || []);
-      })
-      .catch(console.warn)
-      .finally(() => setLoading(false));
+    
+    // Load sequentially rather than Promise.all to prevent flooding the backend authentication rate limits (429 -> 401 proxy issue)
+    const loadData = async () => {
+      try {
+        const w = await getFullWallet(); setWallet(w);
+        const t = await getTrades(); setTrades(t);
+        const s = await getUserStats(); setStats(s);
+        const b = await getBridgeHistory(); setBridges(b.bridges || []);
+        const f = await getPretiumTransactions(null, 5); setPretiumTxs(f.transactions || []);
+      } catch (err) {
+        console.warn('Profile sync error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadData();
   }, [walletAddress]);
 
   const saveUsername = async () => {
