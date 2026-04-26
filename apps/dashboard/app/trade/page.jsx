@@ -151,7 +151,8 @@ export default function BetsPage() {
   const load = async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
     try {
-      const [t, w] = await Promise.all([getTrades(), getWallet()]);
+      const t = await getTrades();
+      const w = await getWallet();
       setTrades(t);
       setWallet(w);
       if (t.length > 0) {

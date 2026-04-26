@@ -34,7 +34,22 @@ export async function authFetch(endpoint, options = {}) {
     }
   }
 
-  return fetch(endpoint, { ...options, headers });
+  let res = await fetch(endpoint, { ...options, headers });
+  
+  // If backend returns 401, it is almost certainly Privy rate limiting the python server (since we sent a token)
+  if (res.status === 401) {
+    console.warn(`[authFetch] 401 on ${endpoint}, retrying in 1.5s...`);
+    await new Promise(r => setTimeout(r, 1500));
+    try {
+      if (typeof window !== 'undefined') {
+        const freshToken = await getAccessToken();
+        if (freshToken) headers.set('Authorization', `Bearer ${freshToken}`);
+      }
+    } catch {}
+    res = await fetch(endpoint, { ...options, headers });
+  }
+  
+  return res;
 }
 
 const abbr = (n) => {
