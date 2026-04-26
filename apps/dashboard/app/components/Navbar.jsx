@@ -6,88 +6,67 @@ import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { useTradingMode } from './TradingModeContext';
 import ModeToggleModal from './ModeToggleModal';
 import AuthRequiredModal from './AuthRequiredModal';
-import PremiumGate from './PremiumGate';
 
 // ── Which routes require authentication ───────────────────────────────────────
 // Public routes anyone can visit; everything else will trigger the login modal.
 const PUBLIC_ROUTES = new Set(['/', '/signals', '/markets', '/leaderboard']);
-import { useTier } from '@/hooks/useTier';
 
 // Nav items with human-readable "why you need to login" messages for protected routes
 const NAV_ITEMS = [
   {
-    href: '/',
-    key: 'feed',
-    label: 'Feed',
-    public: true,
-    icon: <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>,
+    href:     '/',
+    key:      'feed',
+    label:    'Feed',
+    public:   true,
+    icon: <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
   },
   {
-    href: '/signals',
-    key: 'signals',
-    label: 'Signals',
-    public: true,
-    icon: <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>,
+    href:     '/signals',
+    key:      'signals',
+    label:    'Signals',
+    public:   true,
+    icon: <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
   },
   {
-    href: '/leaderboard',
-    key: 'leaderboard',
-    label: 'Ranks',
-    public: true,
-    icon: <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6" /></svg>,
+    href:     '/leaderboard',
+    key:      'leaderboard',
+    label:    'Ranks',
+    public:   true,
+    icon: <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>,
   },
   {
-    href: '/achievements',
-    key: 'achievements',
-    label: 'Badges',
-    public: false,
-    authMsg: 'Connect your wallet to track your achievements and badges.',
-    icon: <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6" /><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11" /></svg>,
+    href:     '/achievements',
+    key:      'achievements',
+    label:    'Badges',
+    public:   false,
+    authMsg:  'Connect your wallet to track your achievements and badges.',
+    icon: <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>,
   },
   {
-    href: '/trade',
-    key: 'bets',
-    label: 'Bets',
-    public: false,
-    authMsg: 'Connect your wallet to see your open positions and trade history.',
-    icon: <svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" /></svg>,
+    href:     '/trade',
+    key:      'bets',
+    label:    'Bets',
+    public:   false,
+    authMsg:  'Connect your wallet to see your open positions and trade history.',
+    icon: <svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>,
   },
   {
-    href: '/wallet',
-    key: 'wallet',
-    label: 'Wallet',
-    public: false,
-    authMsg: 'Connect your wallet to deposit, withdraw, and view your balance.',
-    icon: <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2" /><path d="M2 10h20" /><circle cx="18" cy="16" r="1" /></svg>,
+    href:     '/wallet',
+    key:      'wallet',
+    label:    'Wallet',
+    public:   false,
+    authMsg:  'Connect your wallet to deposit, withdraw, and view your balance.',
+    icon: <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="18" cy="16" r="1"/></svg>,
   },
   {
-    href: '/profile',
-    key: 'profile',
-    label: 'Profile',
-    public: false,
-    authMsg: 'Connect your wallet to view and customize your profile.',
-    icon: <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>,
+    href:     '/profile',
+    key:      'profile',
+    label:    'Profile',
+    public:   false,
+    authMsg:  'Connect your wallet to view and customize your profile.',
+    icon: <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   },
 ];
-
-function NavIcon({ navKey }) {
-  const item = NAV_ITEMS.find(i => i.key === navKey);
-  if (!item) return null;
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="nav-icon"
-      style={{ width: 20, height: 20 }}
-    >
-      {item.icon.props.children}
-    </svg>
-  );
-}
 
 // ── Mode pill ─────────────────────────────────────────────────────────────────
 function ModePill({ onClick }) {
@@ -99,55 +78,38 @@ function ModePill({ onClick }) {
       onClick={onClick}
       title={`Trading mode: ${mode}. Click to switch.`}
       style={{
-        display: 'flex', alignItems: 'center', gap: 5,
-        padding: '3px 10px', borderRadius: 20,
-        border: `1.5px solid ${isReal ? '#F59E0B' : 'var(--border)'}`,
-        background: isReal ? 'rgba(245,158,11,0.12)' : 'var(--card)',
-        color: isReal ? '#F59E0B' : 'var(--muted)',
-        fontSize: 11, fontFamily: 'DM Mono, monospace', fontWeight: 600,
-        letterSpacing: '0.04em', cursor: 'pointer', textTransform: 'uppercase',
-        whiteSpace: 'nowrap', flexShrink: 0, transition: 'all 0.2s',
+        display:        'flex',
+        alignItems:     'center',
+        gap:            5,
+        padding:        '3px 10px',
+        borderRadius:   20,
+        border:         `1.5px solid ${isReal ? '#F59E0B' : 'var(--border)'}`,
+        background:     isReal ? 'rgba(245,158,11,0.12)' : 'var(--card)',
+        color:          isReal ? '#F59E0B' : 'var(--muted)',
+        fontSize:       11,
+        fontFamily:     'DM Mono, monospace',
+        fontWeight:     600,
+        letterSpacing:  '0.04em',
+        cursor:         'pointer',
+        textTransform:  'uppercase',
+        whiteSpace:     'nowrap',
+        flexShrink:     0,
+        transition:     'all 0.2s',
       }}
     >
       <span style={{
-        width: 6,
-        height: 6,
+        width:        6,
+        height:       6,
         borderRadius: '50%',
-        background: isReal ? '#F59E0B' : 'var(--muted)',
-        animation: isReal ? 'pulse 1.5s infinite' : 'none',
-        flexShrink: 0,
+        background:   isReal ? '#F59E0B' : 'var(--muted)',
+        animation:    isReal ? 'pulse 1.5s infinite' : 'none',
+        flexShrink:   0,
       }} />
       {isReal ? 'Real' : 'Paper'}
     </button>
   );
 }
 
-function TierBadge({ onUpgradeClick }) {
-  const { tier, remaining, loading, FREE_DAILY_LIMIT } = useTier();
-  if (loading) return null;
-  const isPremium = tier === 'premium';
-  return (
-    <button
-      id="tier-badge-btn"
-      onClick={!isPremium ? onUpgradeClick : undefined}
-      title={isPremium ? 'Premium access — unlimited AI calls' : `${remaining} free calls remaining · Click to upgrade`}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 5,
-        padding: '3px 10px', borderRadius: 20,
-        border: `1.5px solid ${isPremium ? '#F59E0B' : 'var(--border)'}`,
-        background: isPremium ? 'rgba(245,158,11,0.12)' : 'var(--card)',
-        color: isPremium ? '#F59E0B' : 'var(--muted)',
-        fontSize: 11, fontFamily: 'DM Mono, monospace', fontWeight: 600,
-        letterSpacing: '0.04em', textTransform: 'uppercase',
-        whiteSpace: 'nowrap', flexShrink: 0, userSelect: 'none',
-        cursor: isPremium ? 'default' : 'pointer',
-        transition: 'all 0.2s',
-      }}
-    >
-      {isPremium ? '⚡ PREMIUM' : `FREE · ${remaining ?? 0}/${FREE_DAILY_LIMIT}`}
-    </button>
-  );
-}
 // ── NavItem — renders as Link (public) or guarded button (protected) ──────────
 function NavItem({ item, active, isAuthed, onGuardedClick, mobile = false }) {
   const isActive = active === item.key;
@@ -185,12 +147,12 @@ function NavItem({ item, active, isAuthed, onGuardedClick, mobile = false }) {
         <span style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {item.icon}
           <span style={{
-            position: 'absolute',
-            bottom: -3,
-            right: -4,
-            fontSize: 7,
+            position:   'absolute',
+            bottom:     -3,
+            right:      -4,
+            fontSize:   7,
             lineHeight: 1,
-            color: 'var(--text-muted)',
+            color:      'var(--text-muted)',
           }}>🔒</span>
         </span>
         {item.label}
@@ -217,7 +179,7 @@ export default function Navbar({ active }) {
   const { user, isAuthed } = useAuth();
   const initials = user?.firstName?.slice(0, 2).toUpperCase() || 'NJ';
   const [showModeModal, setShowModeModal] = useState(false);
-  const [showUpgrade, setShowUpgrade]     = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
 
   const {
     pendingRoute,
@@ -229,11 +191,7 @@ export default function Navbar({ active }) {
 
   return (
     <>
-      <div className="nav-top-mobile">
-        <Link href="/" className="nav-logo">NORT</Link>
-        <TierBadge onUpgradeClick={() => setShowUpgrade(true)} />
-      </div>
-
+      {/* ── MOBILE bottom nav ── */}
       <nav className="nav-mobile">
         {NAV_ITEMS.map(item => (
           <NavItem
@@ -251,19 +209,20 @@ export default function Navbar({ active }) {
       <div
         style={{
           position: 'fixed',
-          bottom: 62,
-          right: 12,
-          zIndex: 90,
-          display: 'none',
+          bottom:   62,
+          right:    12,
+          zIndex:   90,
+          display:  'none',
         }}
         className="mode-pill-mobile"
       >
         <ModePill onClick={() => setShowModeModal(true)} />
       </div>
 
+      {/* ── DESKTOP top nav ── */}
       <nav className="nav-desktop">
         <div className="nav-desktop-inner">
-          <Link href="/" className="nav-logo">NORT</Link>
+          <Link href="/" className="nav-logo" style={{ fontFamily: 'Syne', fontWeight: 800 }}>NORT</Link>
 
           <div className="nav-links">
             {NAV_ITEMS.filter(i => i.key !== 'profile').map(item => (
@@ -278,7 +237,15 @@ export default function Navbar({ active }) {
           </div>
 
           <div className="nav-right">
-            <TierBadge onUpgradeClick={() => setShowUpgrade(true)} />
+            {/* Search Button */}
+            <button 
+              onClick={() => setShowSearch(true)}
+              className="nav-link"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+
             <ModePill onClick={() => setShowModeModal(true)} />
 
             <div className="live-pill">
@@ -286,7 +253,7 @@ export default function Navbar({ active }) {
               Live
             </div>
 
-            {/* Profile: guarded on desktop too */}
+            {/* Profile */}
             {isAuthed ? (
               <Link
                 href="/profile"
@@ -295,14 +262,15 @@ export default function Navbar({ active }) {
               >
                 <span style={{
                   width: 22, height: 22, borderRadius: '50%',
-                  background: active === 'profile' ? 'rgba(255,255,255,0.2)' : 'var(--black)',
-                  color: 'var(--white)', display: 'flex', alignItems: 'center',
+                  background: active === 'profile' ? '#34C07F' : '#1a1a1a',
+                  color: active === 'profile' ? '#000' : '#fff',
+                  border: '1px solid #34C07F',
+                  display: 'flex', alignItems: 'center',
                   justifyContent: 'center', fontSize: 9,
                   fontFamily: 'DM Mono, monospace', flexShrink: 0,
                 }}>
                   {initials}
                 </span>
-                Profile
               </Link>
             ) : (
               <button
@@ -320,22 +288,36 @@ export default function Navbar({ active }) {
                 }}>
                   ?
                 </span>
-                Sign In
               </button>
             )}
           </div>
         </div>
       </nav>
 
+      {/* ── Search Modal ── */}
+      {showSearch && (
+        <div className="search-modal-overlay" onClick={() => setShowSearch(false)}>
+          <div className="search-modal" onClick={e => e.stopPropagation()}>
+            <div className="search-input-wrap">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#848282" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input 
+                autoFocus
+                placeholder="Search signals, markets, traders..." 
+                className="search-input"
+                type="text"
+              />
+            </div>
+            <div className="search-results">
+              <div style={{ padding: '20px', textAlign: 'center', color: '#848282', fontSize: '13px' }}>
+                Type to search for active signals
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Mode toggle modal ── */}
       {showModeModal && <ModeToggleModal onClose={() => setShowModeModal(false)} />}
-
-      {/* ── Premium upgrade modal ── */}
-      <PremiumGate
-        open={showUpgrade}
-        onClose={() => setShowUpgrade(false)}
-        reason="feature"
-      />
 
       {/* ── Auth required modal (shown when guarded route clicked) ── */}
       {pendingRoute && (

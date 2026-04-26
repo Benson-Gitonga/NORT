@@ -11,3 +11,6 @@ slowapi          # Rate limiting dependency
 PyJWT[crypto]    # JWT verification for Privy access tokens (RSA256)
 deep-translator  # Google Translate wrapper for Swahili support
 apscheduler      # Async job scheduler (market watch, alerts)
+py-clob-client   # Polymarket CLOB client — EIP-712 order signing
+web3             # Ethereum / Polygon RPC calls (balance checks, tx verification)
+eth-account      # Wallet key generation + signing utilities
