@@ -72,7 +72,11 @@ def get_mode(
     Returns the user's current trading mode and real USDC balance.
     The frontend uses this to render the toggle pill and warning modal.
     """
-    config = _resolve_config(wallet_address, telegram_user_id, session)
+    requested_wallet = (wallet_address or current_user["wallet"]).lower()
+    if requested_wallet != current_user["wallet"].lower():
+        raise HTTPException(status_code=403, detail="Cannot access mode for another wallet")
+
+    config = _resolve_config(requested_wallet, telegram_user_id, session)
     return {
         "trading_mode":      config.trading_mode,
         "real_balance_usdc": round(config.real_balance_usdc, 2),
@@ -98,12 +102,11 @@ def set_mode(
     real → paper:
       Always instant. confirmed not required.
     """
-    config = _resolve_config(request.wallet_address, request.telegram_user_id, session)
-    
-    # Enforce ownership mapping against token
-    target_wallet = config.telegram_user_id.lower()
-    if target_wallet != current_user["wallet"].lower():
+    requested_wallet = (request.wallet_address or current_user["wallet"]).lower()
+    if requested_wallet != current_user["wallet"].lower():
         raise HTTPException(status_code=403, detail="Cannot modify modes for other users' wallets")
+
+    config = _resolve_config(requested_wallet, request.telegram_user_id, session)
 
     requested_mode = request.mode.lower().strip()
     if requested_mode not in ("paper", "real"):

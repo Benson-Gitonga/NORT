@@ -7,7 +7,7 @@ import Header from '@/components/Header';
 import Navbar from '@/components/Navbar';
 import Link from 'next/link';
 import AuthGate from '@/components/AuthGate';
-import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE } from '@/lib/api';
+import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE, authFetch } from '@/lib/api';
 
 export default function ProfilePage() {
   const { user, walletAddress, logout, isLoggingOut } = useAuth();
@@ -30,7 +30,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!walletAddress) return;
-    fetch(`${BASE}/api/wallet/connect`, {
+    authFetch(`${BASE}/api/wallet/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wallet_address: walletAddress.toLowerCase() }),
@@ -70,7 +70,7 @@ export default function ProfilePage() {
     if (!newUsername.trim() || !walletAddress) return;
     setSavingName(true); setSaveError('');
     try {
-      await fetch(`${BASE}/api/wallet/connect`, {
+      await authFetch(`${BASE}/api/wallet/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet_address: walletAddress.toLowerCase(), username: newUsername.trim() }),

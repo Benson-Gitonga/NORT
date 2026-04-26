@@ -10,59 +10,127 @@ export const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-export async function authFetch(endpoint, options = {}) {
-  const headers = new Headers(options.headers || {});
-  
-  // Only attempt to get token client-side
-  if (typeof window !== 'undefined') {
-    let token = null;
-    // Retry poller: Privy's global getAccessToken can randomly return null during rapid mount hydration
-    for (let i = 0; i < 4; i++) {
-      try {
-        token = await getAccessToken();
-        if (token) break;
-      } catch (e) {
-        // silent
-      }
-      await new Promise(r => setTimeout(r, 250));
-    }
-    
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-      // ADDED FOR POSTMAN DEBUGGING:
-      console.log(`[DEBUG] Token found! For Postman, use Header:\nAuthorization: Bearer ${token.substring(0, 30)}...`);
-      if (typeof window !== 'undefined') window.__DEBUG_TOKEN = token;
-    } else {
-      console.error("[authFetch] Failed to retrieve Privy token. Token evaluated to null/undefined.");
-    }
+const AUTH_STATE_EVENT = 'nort_auth_state';
+const SESSION_EXPIRED_EVENT = 'session_expired';
+const TOKEN_POLL_ATTEMPTS = 6;
+const TOKEN_POLL_DELAY_MS = 200;
+const AUTH_READY_TIMEOUT_MS = 4000;
+
+let accessTokenCache = null;
+let accessTokenCachedAt = 0;
+let sessionExpiredNotified = false;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isValidToken = (token) =>
+  !!token && token !== 'null' && token !== 'undefined' && token.split('.').length === 3;
+
+const buildUnauthorizedResponse = (detail = 'Unauthorized') =>
+  new Response(JSON.stringify({ detail }), {
+    status: 401,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+const getAuthState = () => {
+  if (typeof window === 'undefined') return { ready: false, isAuthed: false };
+  return window.__NORT_AUTH_STATE || { ready: false, isAuthed: false };
+};
+
+const notifySessionExpired = (reason, endpoint, status = 401) => {
+  if (typeof window === 'undefined' || sessionExpiredNotified) return;
+  sessionExpiredNotified = true;
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, {
+    detail: { reason, endpoint, status, at: Date.now() },
+  }));
+};
+
+const waitForAuthReady = async (timeoutMs = AUTH_READY_TIMEOUT_MS) => {
+  if (typeof window === 'undefined') return { ready: false, isAuthed: false };
+  const current = getAuthState();
+  if (current.ready) return current;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener(AUTH_STATE_EVENT, onAuthState);
+      clearTimeout(timer);
+      resolve(state || getAuthState());
+    };
+    const onAuthState = (event) => {
+      const detail = event?.detail || getAuthState();
+      if (detail.ready) finish(detail);
+    };
+    const timer = setTimeout(() => finish(getAuthState()), timeoutMs);
+    window.addEventListener(AUTH_STATE_EVENT, onAuthState);
+  });
+};
+
+const resolveAccessToken = async () => {
+  const now = Date.now();
+  if (isValidToken(accessTokenCache) && (now - accessTokenCachedAt) < 30_000) {
+    return accessTokenCache;
   }
 
-  let res = await fetch(endpoint, { ...options, headers });
-  
-  // 1-time retry logic for hydration misses
-  if (res.status === 401) {
-    console.warn(`[authFetch] 401 Unauthorized on ${endpoint}, checking for stale token...`);
-    
-    // give Privy exactly 1 attempt to provide a fresh token
-    await new Promise(r => setTimeout(r, 500));
+  for (let i = 0; i < TOKEN_POLL_ATTEMPTS; i += 1) {
     try {
-      if (typeof window !== 'undefined') {
-        const freshToken = await getAccessToken();
-        if (freshToken) headers.set('Authorization', `Bearer ${freshToken}`);
+      const token = await getAccessToken();
+      if (isValidToken(token)) {
+        accessTokenCache = token;
+        accessTokenCachedAt = Date.now();
+        sessionExpiredNotified = false;
+        return token;
       }
     } catch {}
-    
-    res = await fetch(endpoint, { ...options, headers });
-
-    // If it STILL fails, the session is dead or backend is blocking it.
-    if (res.status === 401) {
-      console.error(`[authFetch] FATAL 401 Unauthorized. Dispatching session_expired event.`);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('session_expired'));
-      }
-    }
+    await sleep(TOKEN_POLL_DELAY_MS);
   }
-  
+
+  accessTokenCache = null;
+  accessTokenCachedAt = 0;
+  return null;
+};
+
+export async function authFetch(endpoint, options = {}) {
+  const {
+    requireAuth = true,
+    ...requestOptions
+  } = options;
+  const headers = new Headers(requestOptions.headers || {});
+
+  if (typeof window === 'undefined') {
+    return fetch(endpoint, { ...requestOptions, headers });
+  }
+
+  if (requireAuth) {
+    const authState = await waitForAuthReady();
+    if (!authState.ready || !authState.isAuthed) {
+      notifySessionExpired('auth_not_ready_or_not_authed', endpoint, 401);
+      return buildUnauthorizedResponse('Authentication required');
+    }
+
+    const token = await resolveAccessToken();
+    if (!token) {
+      notifySessionExpired('missing_privy_access_token', endpoint, 401);
+      return buildUnauthorizedResponse('Missing Privy access token');
+    }
+
+    headers.set('Authorization', `Bearer ${token}`);
+    window.__NORT_LAST_ACCESS_TOKEN = token;
+  } else {
+    try {
+      const optionalToken = await getAccessToken();
+      if (isValidToken(optionalToken)) headers.set('Authorization', `Bearer ${optionalToken}`);
+    } catch {}
+  }
+
+  const res = await fetch(endpoint, { ...requestOptions, headers });
+  if (requireAuth && res.status === 401) {
+    accessTokenCache = null;
+    accessTokenCachedAt = 0;
+    notifySessionExpired('backend_rejected_token', endpoint, 401);
+  }
+
   return res;
 }
 
@@ -86,7 +154,7 @@ const getStoredWallet = () => {
 export async function getSignals(filter = 'all', category = 'crypto') {
   // category: 'crypto' | 'sports' | 'all'
   const categoryParam = category !== 'all' ? `&category=${category}` : '';
-  const sigRes = await authFetch(`${BASE}/signals/?top=50${categoryParam}`);
+  const sigRes = await authFetch(`${BASE}/signals/?top=50${categoryParam}`, { requireAuth: false });
   if (!sigRes.ok) throw new Error(`Failed to load signals`);
 
   const sigData = await sigRes.json();
@@ -128,7 +196,7 @@ export async function getSignals(filter = 'all', category = 'crypto') {
 // ─── MARKETS ─────────────────────────────────────────────────────────────────
 
 export async function getMarket(id) {
-  const res = await authFetch(`${BASE}/markets/${id}`);
+  const res = await authFetch(`${BASE}/markets/${id}`, { requireAuth: false });
   if (!res.ok) throw new Error(`Market ${id} not found`);
   const m = await res.json();
   return {
@@ -144,7 +212,7 @@ export async function getMarket(id) {
 }
 
 export async function listMarkets() {
-  const res = await authFetch(`${BASE}/markets/?limit=500`);
+  const res = await authFetch(`${BASE}/markets/?limit=500`, { requireAuth: false });
   if (!res.ok) throw new Error(`Markets authFetch failed: ${res.status}`);
   const data = await res.json();
   return (data.markets || []).map(m => ({
@@ -160,7 +228,7 @@ export async function listMarkets() {
 }
 
 export async function refreshMarkets() {
-  const res = await authFetch(`${BASE}/markets/refresh`);
+  const res = await authFetch(`${BASE}/markets/refresh`, { requireAuth: false });
   if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
   return await res.json();
 }

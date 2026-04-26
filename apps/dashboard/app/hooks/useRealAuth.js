@@ -78,6 +78,20 @@ export function useRealAuth() {
 
   const isAuthed =
     !!privyReady && initialized && (!!authenticated || !!tgUser);
+  const privySessionReady = !!privyReady && initialized;
+
+  // Publish Privy auth readiness for api/authFetch so protected calls do not race login hydration.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const detail = {
+      ready: privySessionReady,
+      // Backend JWT verification only works with a Privy-authenticated session.
+      isAuthed: !!authenticated,
+      walletAddress: privyWalletAddress ? privyWalletAddress.toLowerCase() : null,
+    };
+    window.__NORT_AUTH_STATE = detail;
+    window.dispatchEvent(new CustomEvent("nort_auth_state", { detail }));
+  }, [privySessionReady, authenticated, privyWalletAddress]);
 
   const logout = async () => {
     if (isLoggingOut) return;

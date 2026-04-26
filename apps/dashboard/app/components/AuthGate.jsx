@@ -19,7 +19,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTelegram } from '@/hooks/useTelegram';
 
 export default function AuthGate({ children, softGate = false }) {
-  const { ready: privyReady, isAuthed } = useAuth();
+  const { ready: privyReady, isAuthed, login } = useAuth();
   const { user: tgUser, ready: tgReady } = useTelegram();
   const [redirected, setRedirected] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -29,10 +29,18 @@ export default function AuthGate({ children, softGate = false }) {
 
   // Listen for fatal 401 events globally
   useEffect(() => {
-    const handleExpired = () => setSessionExpired(true);
+    const handleExpired = () => {
+      setSessionExpired(true);
+      try { login?.(); } catch {}
+    };
     window.addEventListener('session_expired', handleExpired);
     return () => window.removeEventListener('session_expired', handleExpired);
-  }, []);
+  }, [login]);
+
+  // Clear session-expired guard after a successful login.
+  useEffect(() => {
+    if (loggedIn) setSessionExpired(false);
+  }, [loggedIn]);
 
   // Hard gate redirect — runs after mount, no router context needed
   useEffect(() => {
@@ -54,7 +62,7 @@ export default function AuthGate({ children, softGate = false }) {
         <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 20 }}>
           Your authentication token was rejected by the server. Please reconnect your wallet.
         </p>
-        <button className="settings-btn" onClick={() => window.location.href = "/"}>Reconnect Wallet</button>
+        <button className="settings-btn" onClick={() => login?.()}>Reconnect Wallet</button>
       </div>
     );
   }
