@@ -1,17 +1,24 @@
-// next.config.js in your Main NORT Repo
+// next.config.js
 /** @type {import('next').NextConfig} */
 const path = require('path');
 
 const nextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
+
+    // ── Resolve @/* alias explicitly for Turbopack ──────────────────────────
+    // jsconfig.json defines @/* → ./app/* but Turbopack needs the alias
+    // declared here too, or it fails to resolve @/ imports in built chunks.
+    resolveAlias: {
+      '@': path.resolve(__dirname, 'app'),
+    },
   },
 
   async rewrites() {
-    // DO NOT include a rewrite for source: '/' here. The middleware handles it.
+    // DO NOT include a rewrite for source: '/' here — proxy.ts handles it.
     return [
       {
-        // This is necessary to bridge the landing page assets (CSS/JS)
+        // Bridge landing page assets (CSS/JS chunks) from the external Vercel deploy
         source: '/_next/:path*',
         destination: 'https://nort-landing-nine.vercel.app/_next/:path*',
       },
