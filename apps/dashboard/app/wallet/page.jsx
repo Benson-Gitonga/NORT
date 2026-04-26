@@ -71,11 +71,12 @@ export default function WalletPage() {
 
   // ── Load wallet ──
   useEffect(() => {
+    if (!walletAddress) return;
     getFullWallet()
       .then(setWallet)
       .catch(() => { })
       .finally(() => setLoading(false));
-  }, []);
+  }, [walletAddress]);
 
   // ── Load history when tab switches ──
   useEffect(() => {

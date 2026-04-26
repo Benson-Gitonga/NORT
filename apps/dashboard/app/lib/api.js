@@ -10,7 +10,7 @@ export const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-async function authFetch(endpoint, options = {}) {
+export async function authFetch(endpoint, options = {}) {
   const headers = new Headers(options.headers || {});
   
   // Only attempt to get token client-side

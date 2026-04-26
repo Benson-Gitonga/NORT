@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { getTrades, getWallet, getPositionValue, sellTrade, getAchievements } from '@/lib/api';
 import { useAchievement } from '@/components/AchievementContext';
 import { useTelegram } from '@/hooks/useTelegram';
+import { useAuth } from '@/hooks/useAuth';
 import AuthGate from '@/components/AuthGate';
 import Navbar from '@/components/Navbar';
 
@@ -142,6 +143,7 @@ export default function BetsPage() {
   const [sellTarget, setSellTarget] = useState(null); // trade to sell
   const { showAchievement }       = useAchievement();
   const { haptic }                = useTelegram();
+  const { walletAddress }         = useAuth();
   // FIX: track which achievement IDs have already been shown this session
   // so they don't pop up again on every refresh/load call.
   const shownAchievements = useRef(new Set());
@@ -176,7 +178,9 @@ export default function BetsPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (walletAddress) load();
+  }, [walletAddress]);
 
   const handleSellConfirm = async (tradeId) => {
     haptic?.medium?.();
