@@ -134,7 +134,9 @@ async def onramp_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     """Create an on-ramp order: KES -> USDC via M-Pesa STK push."""
-    tid = current_user["wallet"]
+    tid = current_user.get("wallet")
+    if not tid:
+        raise HTTPException(status_code=401, detail="Authentication required to create on-ramp order")
 
     try:
         result = await create_onramp(
@@ -164,7 +166,9 @@ async def offramp_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     """Create an off-ramp order: USDC -> KES via M-Pesa."""
-    tid = current_user["wallet"]
+    tid = current_user.get("wallet")
+    if not tid:
+        raise HTTPException(status_code=401, detail="Authentication required to create off-ramp order")
 
     # Verify on-chain tx_hash
     expected_address = await get_settlement_address(req.chain)
@@ -218,7 +222,7 @@ async def transaction_status_endpoint(
         tx = await check_transaction_status(transaction_id, session)
         if not tx:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        if tx.telegram_user_id.lower() != current_user["wallet"].lower():
+        if tx.telegram_user_id.lower() != (current_user.get("wallet") or "").lower():
             raise HTTPException(status_code=403, detail="Not your transaction")
         return tx
     except ValueError as e:
@@ -239,7 +243,10 @@ def transactions_list_endpoint(
     current_user: dict = Depends(get_current_user),
 ):
     """List transactions for a user."""
-    tid = current_user["wallet"]
+    tid = current_user.get("wallet")
+    if not tid:
+        return {"transactions": []}
+    
     return {
         "transactions": list_transactions(tid, tx_type=type, limit=limit, session=session),
     }

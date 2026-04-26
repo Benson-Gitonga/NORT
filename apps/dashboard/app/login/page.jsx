@@ -90,6 +90,30 @@ export default function LoginPage() {
         </button>
       )}
 
+      {/* DEV BYPASS — testing only, skip auth */}
+      {ready && !isAuthed && (
+        <button
+          onClick={() => router.replace(from)}
+          style={{
+            marginTop: 10,
+            width: '100%',
+            maxWidth: 280,
+            padding: '10px 0',
+            borderRadius: 10,
+            border: '1px dashed rgba(45,212,191,0.35)',
+            background: 'transparent',
+            color: 'var(--teal)',
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            letterSpacing: '0.04em',
+            cursor: 'pointer',
+            opacity: 0.7,
+          }}
+        >
+          [DEV] Skip login →
+        </button>
+      )}
+
       {/* Back to landing */}
       <a
         href="https://nort-landing-nine.vercel.app"

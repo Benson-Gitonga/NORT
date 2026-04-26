@@ -27,9 +27,12 @@ export default function proxy(request: NextRequest) {
   // This is a format check only — full verification happens in FastAPI.
   const isAuthenticated = privyToken.length > 20 && privyToken.split('.').length === 3;
 
-  // ── Root: unauthenticated → external landing; authenticated → dashboard ──
+  // ── Root: unauthenticated → local login (dev) or external landing (prod) ──
   if (pathname === '/') {
     if (!isAuthenticated) {
+      if (process.env.NODE_ENV === 'development') {
+        return NextResponse.redirect(new URL('/login', request.url));
+      }
       return NextResponse.rewrite(
         new URL('https://nort-landing-nine.vercel.app', request.url)
       );

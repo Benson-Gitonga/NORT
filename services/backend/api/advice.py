@@ -1,6 +1,6 @@
-import json
 import re
 import time
+import json
 import httpx
 import os
 import asyncio
@@ -198,7 +198,7 @@ Return JSON only. The market_id field must be exactly: {market_id}
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/usage")
-def get_advice_usage(
+async def get_advice_usage(
     wallet_address: str = "",
     current_user: dict = Depends(get_current_user),
 ):
@@ -239,7 +239,7 @@ def get_advice_usage(
         oldest_ts = min(l.created_at for l in logs)
         if oldest_ts.tzinfo is None:
             oldest_ts = oldest_ts.replace(tzinfo=timezone.utc)
-        reset_utc      = oldest_ts + timedelta(minutes=5)  # TEST (prod: hours=6)
+        reset_utc      = oldest_ts + timedelta(hours=6)
         reset_eat      = reset_utc + timedelta(hours=3)
         window_reset_at = reset_eat.strftime("%I:%M %p EAT").lstrip("0")
 
@@ -490,7 +490,7 @@ def check_rate_limit(telegram_id: str, premium: bool = False) -> None:
         window_start = datetime.now(timezone.utc) - timedelta(hours=1)
         limit = PREMIUM_HOURLY_LIMIT
     else:
-        window_start = datetime.now(timezone.utc) - timedelta(minutes=5)  # TEST (prod: hours=6)
+        window_start = datetime.now(timezone.utc) - timedelta(hours=6)
         limit = FREE_DAILY_LIMIT
 
     with Session(engine) as session:
@@ -506,7 +506,7 @@ def check_rate_limit(telegram_id: str, premium: bool = False) -> None:
         oldest_ts = min(l.created_at for l in count)
         if oldest_ts.tzinfo is None:
             oldest_ts = oldest_ts.replace(tzinfo=timezone.utc)
-        reset_at     = oldest_ts + (timedelta(hours=1) if premium else timedelta(minutes=5))  # TEST (prod: hours=6)
+        reset_at     = oldest_ts + (timedelta(hours=1) if premium else timedelta(hours=6))
         reset_at_eat = reset_at + timedelta(hours=3)
         reset_str    = reset_at_eat.strftime("%I:%M %p EAT").lstrip("0")
         upgrade_hint = " Upgrade to Premium for unlimited access." if not premium else ""

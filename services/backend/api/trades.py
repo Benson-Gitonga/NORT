@@ -54,8 +54,12 @@ class SettleAllRequest(BaseModel):
 @router.post("/papertrade")
 def create_paper_trade(request: PaperTradeRequest, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     try:
+        tid = current_user.get("wallet")
+        if not tid:
+            raise HTTPException(status_code=401, detail="Authentication required to place paper trade")
+            
         trade = place_paper_trade(
-            telegram_user_id=current_user["wallet"],
+            telegram_user_id=tid,
             market_id=request.market_id,
             market_question=request.market_question,
             outcome=request.outcome,
@@ -102,7 +106,8 @@ def sell_position(trade_id: int, session: Session = Depends(get_session), curren
         trade = session.get(PaperTrade, trade_id)
         if not trade:
             raise HTTPException(status_code=404, detail="Trade not found")
-        if trade.telegram_user_id.lower() != current_user["wallet"].lower():
+        user_wallet = current_user.get("wallet")
+        if not user_wallet or trade.telegram_user_id.lower() != user_wallet.lower():
             raise HTTPException(status_code=403, detail="Not your trade")
         result = sell_trade(trade_id, session)
     except ValueError as e:
@@ -169,7 +174,10 @@ def trade_history(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    telegram_user_id = current_user["wallet"]
+    telegram_user_id = current_user.get("wallet")
+    if not telegram_user_id:
+        return {"telegram_user_id": None, "count": 0, "trades": []}
+        
     stmt = select(PaperTrade).where(PaperTrade.telegram_user_id == str(telegram_user_id))
     if status:
         stmt = stmt.where(PaperTrade.status == status.upper())
@@ -210,96 +218,6 @@ def trade_history(
         ],
     }
 
-
-# ─── TASK 11: CONFIRM PENDING TRADE ─────────────────────────────────────────
-
-class ConfirmTradeRequest(BaseModel):
-    telegram_user_id: str
-    action: str   # "yes" | "no"
-
-
-@router.post("/trade/confirm/{pending_id}")
-def confirm_pending_trade(
-    pending_id: int,
-    request: ConfirmTradeRequest,
-    session: Session = Depends(get_session),
-):
-    """
-    Called by the Telegram bot when the user replies YES or NO
-    to a confirmation prompt created by AutoTradeEngine in 'confirm' mode.
-
-    YES → validates expiry, fires a paper trade, marks PendingTrade confirmed
-    NO  → marks PendingTrade cancelled, no trade is placed
-    """
-    from datetime import timezone
-    from services.backend.core.paper_trading import place_paper_trade
-
-    pending = session.get(PendingTrade, pending_id)
-    if not pending:
-        raise HTTPException(status_code=404, detail=f"PendingTrade {pending_id} not found.")
-
-    if pending.telegram_user_id != request.telegram_user_id:
-        raise HTTPException(status_code=403, detail="This confirmation does not belong to you.")
-
-    if pending.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"PendingTrade {pending_id} is already {pending.status}."
-        )
-
-    # Check expiry
-    now = datetime.utcnow().replace(tzinfo=timezone.utc)
-    expires = pending.expires_at.replace(tzinfo=timezone.utc) if pending.expires_at.tzinfo is None \
-              else pending.expires_at
-    if now > expires:
-        pending.status = "expired"
-        session.add(pending)
-        session.commit()
-        raise HTTPException(status_code=410, detail="Confirmation window expired (10 minutes). No trade placed.")
-
-    if request.action.lower() == "no":
-        pending.status = "cancelled"
-        session.add(pending)
-        session.commit()
-        return {"status": "cancelled", "message": "Trade cancelled. No position was opened."}
-
-    if request.action.lower() != "yes":
-        raise HTTPException(status_code=400, detail="action must be 'yes' or 'no'.")
-
-    # Fire the paper trade
-    outcome = "YES" if "YES" in pending.suggested_plan.upper() else "NO"
-    price   = pending.amount_usdc / 10  # derive shares: $amount at $0.10/share default
-    shares  = round(pending.amount_usdc / 0.65, 4)   # use mid-market price as estimate
-
-    try:
-        trade = place_paper_trade(
-            telegram_user_id=pending.telegram_user_id,
-            market_id=pending.market_id,
-            market_question=pending.market_question,
-            outcome=outcome,
-            shares=shares,
-            price_per_share=round(pending.amount_usdc / shares, 6),
-            direction="BUY",
-            session=session,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    pending.status       = "confirmed"
-    pending.confirmed_at = datetime.utcnow()
-    session.add(pending)
-    session.commit()
-
-    return {
-        "status":        "confirmed",
-        "pending_id":    pending_id,
-        "trade_id":      trade.id,
-        "market_id":     trade.market_id,
-        "outcome":       trade.outcome,
-        "shares":        trade.shares,
-        "total_cost":    trade.total_cost,
-        "message":       f"Trade confirmed and placed. BUY {outcome} on {pending.market_id} for ${trade.total_cost:.2f} USDC.",
-    }
 
 
 # ─── TASK 11: CONFIRM A PENDING TRADE ───────────────────────────────────────

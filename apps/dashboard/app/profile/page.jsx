@@ -14,7 +14,7 @@ export default function ProfilePage() {
   const { user, walletAddress, logout } = useAuth();
   const { haptic } = useTelegram();
   const { mode } = useTradingMode();
-  const { tier, usedToday, remaining, atLimit, FREE_DAILY_LIMIT } = useTier();
+  const { tier } = useTier();
   const isReal = mode === 'real';
 
   const [wallet, setWallet] = useState(null);
@@ -169,37 +169,27 @@ export default function ProfilePage() {
           {/* ── Tier Card ── */}
           <div className="fu d2" style={{
             margin: '0 0 4px',
-            padding: '12px 16px',
+            padding: '10px 14px',
             background: tier === 'premium' ? 'rgba(245,158,11,0.08)' : 'var(--card)',
             borderRadius: 'var(--r)',
             border: `1px solid ${tier === 'premium' ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            display: 'inline-flex', alignItems: 'center', gap: 12,
           }}>
             <div>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>AI Advice Tier</div>
               <div style={{ fontSize: 15, fontWeight: 700, color: tier === 'premium' ? '#F59E0B' : 'var(--teal)' }}>
-                {tier === 'premium' ? '⭐ Premium' : '◈ Free'}
+                {tier === 'premium' ? 'Premium' : 'Free'}
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              {tier === 'free' ? (
-                <>
-                  <div style={{ fontSize: 11, color: atLimit ? 'var(--red)' : 'var(--muted)' }}>
-                    {usedToday} / {FREE_DAILY_LIMIT} used today
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                    {atLimit ? '⛔ Limit reached — unlock Premium' : `${remaining} advice calls left`}
-                  </div>
-                  <button
-                    className="chip-btn"
-                    style={{ marginTop: 8, borderColor: 'rgba(245,158,11,0.35)', color: '#F59E0B' }}
-                    onClick={() => setShowPremiumGate(true)}
-                  >
-                    Upgrade to Premium
-                  </button>
-                </>
-              ) : (
-                <div style={{ fontSize: 11, color: '#F59E0B' }}>Unlimited advice ✓</div>
+              {tier === 'free' && (
+                <button
+                  className="chip-btn"
+                  style={{ borderColor: 'rgba(245,158,11,0.35)', color: '#F59E0B' }}
+                  onClick={() => setShowPremiumGate(true)}
+                >
+                  Upgrade to Premium
+                </button>
               )}
             </div>
           </div>
@@ -207,9 +197,7 @@ export default function ProfilePage() {
           <PremiumGate
             open={showPremiumGate}
             onClose={() => setShowPremiumGate(false)}
-            reason={atLimit ? 'limit' : 'feature'}
-            used={usedToday}
-            limit={FREE_DAILY_LIMIT}
+            reason="feature"
           />
 
           {/* ── Balance Card (mode-aware) ── */}

@@ -3027,6 +3027,30 @@ body::after {
   }
 }
 
+/* ── Mobile top nav (Logo + Tier) ────────────────────────────────────────── */
+.nav-top-mobile {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50px;
+  background: var(--navy-deep, #010409);
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 1000;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@media (min-width: 1024px) {
+  .nav-top-mobile {
+    display: none !important;
+  }
+}
+
 /* The modal inside the overlay gets the animation */
 .modal-overlay .modal {
   animation: authModalIn 0.28s cubic-bezier(.4, 0, .2, 1) both;

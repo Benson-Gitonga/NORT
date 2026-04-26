@@ -311,7 +311,7 @@ def _handle_funds_deposited(payload: dict, session: Session) -> dict:
 # ─── WALLET SUMMARY ───────────────────────────────────────────────────────────
 
 @router.get("/wallet/summary")
-def wallet_summary(
+async def wallet_summary(
     wallet_address: Optional[str] = None,
     telegram_user_id: Optional[str] = None,
     session: Session = Depends(get_session),
@@ -324,13 +324,25 @@ def wallet_summary(
         GET /wallet/summary?wallet_address=0xABC...123
         GET /wallet/summary?telegram_user_id=987654321
     """
+    # Default to current user if both params are missing
     if not wallet_address and not telegram_user_id:
-        # Default to current user
-        wallet_address = current_user["wallet"]
-    
+        wallet_address = current_user.get("wallet")
+
+    if not wallet_address and not telegram_user_id:
+        raise HTTPException(status_code=400, detail="wallet_address or telegram_user_id required")
+
     # Validation against token
     target = (wallet_address or telegram_user_id).lower()
-    if current_user["wallet"].lower() != target:
+    user_wallet = (current_user.get("wallet") or "").lower()
+
+    if user_wallet != target:
+        # For development/unauthenticated testing, we might want to allow this if NO token is provided at all?
+        # But for security, we should enforce it if a token is present.
+        # If no token is provided, user_wallet is "".
+        if user_wallet == "":
+             # If completely unauthenticated, we currently allow viewing if they provide the address?
+             # Actually, let's keep it secure: must be authenticated.
+             raise HTTPException(status_code=401, detail="Authentication required to view wallet summary")
         raise HTTPException(status_code=403, detail="Cannot access other users' wallet details")
 
     try:

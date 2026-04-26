@@ -288,16 +288,18 @@ async def run_synthesis(
     Builds one clean, enriched prompt and sends to Claude 3 Haiku.
     Uses premium model (Claude 3.5 Sonnet) if premium=True.
     """
-    from services.agent.prompt_templates import ADVICE_SYSTEM_PROMPT
+    from services.backend.core.prompt_templates import ADVICE_SYSTEM_PROMPT
 
     if premium:
-        model = "anthropic/claude-3.5-sonnet"
+        model = "anthropic/claude-sonnet-4-5"
         max_tokens = 2000
         tier_instruction = (
-            "\nPREMIUM MODE: Provide a full 3-paragraph deep-dive analysis. "
+            "\nPREMIUM MODE: Provide a full 3-paragraph deep-dive analysis written directly to this user. "
+            "Open by referencing their portfolio size and risk level (from RiskAgent). "
             "Include EXACT entry/exit odds targets (e.g. 'enter at 0.42, exit at 0.68'), "
-            "a precise position sizing recommendation in USDC based on the RiskAgent output, "
-            "and a specific probability estimate with reasoning (e.g. '72% chance YES resolves')."
+            "a precise position size recommendation in USDC anchored to their safe_bet_usdc, "
+            "and a specific probability estimate with reasoning (e.g. '72% chance YES resolves'). "
+            "Use 'you' and 'your' throughout — this analysis is personal, not generic."
         )
     else:
         # Small cheap model for free tier — fast, low cost, deliberately limited detail
@@ -329,7 +331,7 @@ Current Odds:      {technical.get('current_odds', 'N/A')}
 Momentum:          {technical.get('momentum', 'N/A')} (movement: {technical.get('odds_movement', 'N/A')})
 Volume Activity:   {technical.get('volume_flag', 'N/A')} (ratio vs avg: {technical.get('volume_ratio', 'N/A')})
 AI Signal:         {technical.get('signal_prediction', 'N/A')} (confidence: {technical.get('signal_confidence', 'N/A')})
-{f"⚠️ EXPIRY WARNING: {technical['expiry_warning']}" if technical.get('expiry_warning') else ''}
+{f"EXPIRY WARNING: {technical['expiry_warning']}" if technical.get('expiry_warning') else ''}
 
 ━━━ SENTIMENT ANALYSIS (SentimentAgent) ━━━
 Sentiment Score:   {sentiment.get('score', 5)}/10

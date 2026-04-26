@@ -6,24 +6,37 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTier } from '@/hooks/useTier';
 import LoginPrompt from './LoginPrompt';
 
-const INIT_MSG = {
-  id: 'init',
-  role: 'ai',
-  text: "Hey — I'm NORT- AI advisor. Ask me anything about this market.",
-};
 
 export default function ChatSheet({ signal, onClose }) {
   const { haptic } = useTelegram();
   const { isAuthed, walletAddress, login } = useAuth();
-  const { tier, remaining, atLimit, refresh, FREE_DAILY_LIMIT } = useTier();
+  const { tier, atLimit, windowResetAt, refresh, optimisticUpgrade } = useTier();
 
-  const [messages, setMessages] = useState([INIT_MSG]);
+  const buildInitMsg = (t) => ({
+    id: 'init',
+    role: 'ai',
+    text: t === 'premium'
+      ? "Welcome back — full analysis mode is active. Ask me anything about this market and I'll give you exact entry/exit targets and position sizing."
+      : "Hey — I'm NORT, your AI market advisor. Ask me anything about this market.",
+  });
+
+  const [messages, setMessages] = useState([buildInitMsg(tier)]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
   const [gated, setGated] = useState(false);
   const [payInput, setPayInput] = useState('');
   const [payLoading, setPayLoading] = useState(false);
   const bottomRef = useRef(null);
+
+  // Update greeting once tier resolves from loading state
+  useEffect(() => {
+    setMessages(prev => {
+      if (prev.length === 1 && prev[0].id === 'init') {
+        return [buildInitMsg(tier)];
+      }
+      return prev;
+    });
+  }, [tier]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -34,7 +47,7 @@ export default function ChatSheet({ signal, onClose }) {
     if (!signal?.id || !isAuthed) return;
     getChatHistory(signal.id).then(history => {
       if (history && history.length > 0) {
-        setMessages([INIT_MSG, ...history.map(m => {
+        setMessages([buildInitMsg(tier), ...history.map(m => {
           if (m.role === 'ai' && m.advice) {
             return {
               id: m.id,
@@ -53,7 +66,7 @@ export default function ChatSheet({ signal, onClose }) {
           return { id: m.id, role: m.role, text: m.text };
         })]);
       }
-    }).catch(() => {/* non-fatal — silently ignore */});
+    }).catch(() => {/* non-fatal — silently ignore */ });
   }, [signal?.id, isAuthed]);
 
   if (!isAuthed || !walletAddress) {
@@ -64,36 +77,36 @@ export default function ChatSheet({ signal, onClose }) {
     setMessages(prev => [...prev, { id: Date.now() + Math.random(), role, text }]);
 
   const formatAdvice = (resp) => {
-    const planEmoji = { 'BUY YES': '🟢', 'BUY NO': '🔴', 'WAIT': '⏸️' }[resp.plan] || '';
+    // resp shape: { summary, why, risks, plan, confidence, auto_trade_result, stale_data_warning }
+    const planLabel = resp.plan || 'WAIT';
     const confPct = Math.round((resp.confidence || 0) * 100);
     const auto = resp.auto_trade_result;
 
     let autoNote = '';
-    if (auto?.executed) autoNote = `\n\n⚡ Auto-trade fired: ${auto.reason}`;
-    else if (auto?.mode === 'confirm') autoNote = `\n\n⏳ Confirmation needed: ${auto.reason}`;
-    else if (auto?.reason) autoNote = `\n\n◌ ${auto.reason}`;
+    if (auto?.executed) autoNote = `\n\nAuto-trade fired: ${auto.reason}`;
+    else if (auto?.mode === 'confirm') autoNote = `\n\nConfirmation needed: ${auto.reason}`;
+    else if (auto?.reason && auto.reason !== 'Auto-trade is disabled') autoNote = `\n\n${auto.reason}`;
 
-    const stale = resp.stale_data_warning ? `\n\n⚠️ ${resp.stale_data_warning}` : '';
+    const stale = resp.stale_data_warning ? `\n\n${resp.stale_data_warning}` : '';
 
-    // If the backend already returned deep-dive fields (e.g. because the user has a
-    // confirmed payment and the auto-upgrade fired), show them regardless of whether
-    // the local tier state has caught up yet.
-    const hasDeepData = resp.why && resp.risks && resp.risks.length > 0;
+    // Premium response: has full why + risks data
+    const hasPremiumData = resp.why && resp.risks && resp.risks.length > 0;
 
-    if (tier === 'free' && !hasDeepData) {
+    if (hasPremiumData) {
+      const risksLines = resp.risks.map(r => `- ${r}`).join('\n');
       return (
         `${resp.summary}\n\n` +
-        `🔒 Unlock Premium to see full deep-dive (why it's trending, risks, and exact position targets).\n\n` +
-        `${planEmoji} Plan: ${resp.plan} · Confidence: ${confPct}%` +
+        `WHY IT'S TRENDING\n${resp.why}\n\n` +
+        `KEY RISKS\n${risksLines}\n\n` +
+        `VERDICT: ${planLabel}\nConfidence: ${confPct}%` +
         autoNote + stale
       );
     }
 
+    // Free response: summary + verdict only
     return (
       `${resp.summary}\n\n` +
-      `Why trending: ${resp.why}\n\n` +
-      `Risks: ${(resp.risks || []).join(' · ')}\n\n` +
-      `${planEmoji} Plan: ${resp.plan} · Confidence: ${confPct}%` +
+      `VERDICT: ${planLabel}\nConfidence: ${confPct}%` +
       autoNote + stale
     );
   };
@@ -105,12 +118,8 @@ export default function ChatSheet({ signal, onClose }) {
     // Hard wall: free user at limit
     if (atLimit && tier === 'free') {
       haptic.error?.();
-      addMsg('ai',
-        `⚠️ You've used all ${FREE_DAILY_LIMIT} free advice calls for today.\n\n` +
-        `Unlock Premium for unlimited advice, full analysis, and exact entry/exit targets.`
-      );
       setGated(true);
-      refresh(); // sync the counter so the bar reflects the true used count
+      refresh();
       return;
     }
 
@@ -127,15 +136,22 @@ export default function ChatSheet({ signal, onClose }) {
         resp = await getAdvice(signal?.id, q);
       }
       addMsg('ai', formatAdvice(resp));
+      try {
+        localStorage.removeItem('nort_tier');
+        localStorage.removeItem('nort_at_limit');
+        localStorage.removeItem('nort_reset_at');
+        localStorage.removeItem('nort_used');
+      } catch {}
       refresh(); // update the usage counter after a successful call
     } catch (err) {
       if (err.message === 'PAYMENT_REQUIRED') {
         setGated(true);
-        addMsg('ai', '🔒 This market requires a Premium unlock. Use the payment form below.');
-      } else if (err.message?.includes('429') || err.message?.includes('Limit')) {
+        addMsg('ai', 'This market requires a Premium unlock. Use the payment form below.');
+      } else if (err.message?.includes('429') || err.message?.includes('Limit') || err.message?.includes('free messages')) {
         setGated(true);
         addMsg('ai',
-          `⚠️ Daily free limit reached (${FREE_DAILY_LIMIT}/day).\n\nPaste your x402 payment proof below to unlock Premium.`
+          err.detail || err.message ||
+          'Your free messages are used up. Upgrade to Premium for unlimited access.'
         );
       } else {
         addMsg('ai', 'Something went wrong. Try again in a moment.');
@@ -155,13 +171,14 @@ export default function ChatSheet({ signal, onClose }) {
       if (result.valid) {
         haptic.success?.();
         setGated(false);
-        addMsg('ai', '✅ Payment confirmed — Premium advice unlocked!');
+        addMsg('ai', 'Payment confirmed — Premium advice unlocked!');
+        // Flip tier badge instantly, then load premium advice
+        optimisticUpgrade();
         const premium = await getPremiumAdvice(signal?.id);
         addMsg('ai', formatAdvice(premium));
-        refresh();
       } else {
         haptic.error?.();
-        addMsg('ai', `❌ Payment invalid: ${result.error}`);
+        addMsg('ai', `Payment invalid: ${result.error}`);
       }
     } catch {
       addMsg('ai', 'Verification failed. Try again.');
@@ -170,13 +187,6 @@ export default function ChatSheet({ signal, onClose }) {
       setPayInput('');
     }
   };
-
-  // Tier badge label + colour
-  const tierLabel = tier === 'premium' ? 'PREMIUM' : 'FREE';
-  const tierColor = tier === 'premium' ? '#F59E0B' : 'var(--teal)';
-  const usageLabel = tier === 'free'
-    ? `${remaining ?? '?'} / ${FREE_DAILY_LIMIT} left today`
-    : 'Unlimited';
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -187,37 +197,12 @@ export default function ChatSheet({ signal, onClose }) {
           <div className="chat-title">
             <span className="ai-dot" />
             NORT- AI advisor
-            <span className="chat-badge" style={{ background: tierColor, color: '#000' }}>
-              {tierLabel}
+            <span className="chat-badge" style={{ background: tier === 'premium' ? '#F59E0B' : 'var(--teal)', color: '#000' }}>
+              {tier === 'premium' ? 'PREMIUM' : 'FREE'}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {tier === 'free' && (
-              <span style={{ fontSize: 10, color: atLimit ? 'var(--red)' : 'var(--muted)', fontFamily: 'DM Mono,monospace' }}>
-                {atLimit ? '⛔ limit reached' : usageLabel}
-              </span>
-            )}
-            <button className="chat-close" onClick={onClose}>✕</button>
-          </div>
+          <button className="chat-close" onClick={onClose}>✕</button>
         </div>
-
-        {/* ── Free tier usage bar ── */}
-        {tier === 'free' && (
-          <div style={{ padding: '4px 16px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ flex: 1, height: 3, background: 'var(--g1)', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{
-                height: '100%',
-                width: `${Math.min(100, ((FREE_DAILY_LIMIT - (remaining ?? FREE_DAILY_LIMIT)) / FREE_DAILY_LIMIT) * 100)}%`,
-                background: atLimit ? 'var(--red)' : 'var(--teal)',
-                transition: 'width 0.4s',
-                borderRadius: 2,
-              }} />
-            </div>
-            <span style={{ fontSize: 9, color: 'var(--muted)', fontFamily: 'DM Mono,monospace', whiteSpace: 'nowrap' }}>
-              {atLimit ? 'LIMIT REACHED' : `${FREE_DAILY_LIMIT - (remaining ?? FREE_DAILY_LIMIT)}/${FREE_DAILY_LIMIT} used`}
-            </span>
-          </div>
-        )}
 
         {/* ── Messages ── */}
         <div className="chat-messages">
@@ -232,11 +217,11 @@ export default function ChatSheet({ signal, onClose }) {
             <div className="premium-gate">
               <div className="gate-label">PREMIUM · 0.10 USDC</div>
               <div style={{ fontSize: 12, color: 'var(--g4)', lineHeight: 1.6, marginBottom: 8 }}>
-                <strong>💳 How to unlock Premium:</strong><br />
+                <strong>How to unlock Premium:</strong><br />
                 Send <strong>0.10 USDC</strong> to the NORT treasury on <strong>Base chain</strong>,
                 then paste your transaction hash below.<br />
                 <span style={{ color: 'var(--teal)', fontSize: 11 }}>
-                  🧪 Type <strong>"demo"</strong> to try Premium free (dev mode)
+                  Type <strong>"demo"</strong> to try Premium free (dev mode)
                 </span>
               </div>
               <input
@@ -260,26 +245,38 @@ export default function ChatSheet({ signal, onClose }) {
           <div ref={bottomRef} />
         </div>
 
-        {/* ── Input row (hidden at limit for free users) ── */}
+        {/* ── Input row — fully locked when free user is at limit ── */}
         {!gated && (
           <div className="chat-input-row">
-            <input
-              className="chat-input"
-              placeholder={atLimit ? '⛔ Daily limit reached — unlock Premium' : 'Ask about this market...'}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && send()}
-              disabled={thinking}
-              style={atLimit ? { opacity: 0.5 } : {}}
-            />
-            <button
-              className="chat-send"
-              onClick={atLimit ? () => setGated(true) : send}
-              disabled={thinking || (!atLimit && !input.trim())}
-              style={atLimit ? { background: 'var(--red)', opacity: 0.8 } : {}}
-            >
-              {atLimit ? '🔒' : '↑'}
-            </button>
+            {atLimit ? (
+              <div style={{
+                flex: 1, padding: '10px 14px', borderRadius: 'var(--rsm)',
+                background: 'var(--g1)', border: '1px solid var(--red)',
+                color: 'var(--red)', fontSize: 12, lineHeight: 1.5, textAlign: 'center',
+              }}>
+                Out of free messages
+                {windowResetAt && <><br /><span style={{ color: 'var(--muted)', fontSize: 11 }}>Your limit will refresh at {windowResetAt}</span></>}
+                <br />
+                <button
+                  style={{ marginTop: 6, fontSize: 11, color: 'var(--teal)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => setGated(true)}
+                >
+                  Unlock Premium →
+                </button>
+              </div>
+            ) : (
+              <>
+                <input
+                  className="chat-input"
+                  placeholder="Ask about this market..."
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && send()}
+                  disabled={thinking}
+                />
+                <button className="chat-send" onClick={send} disabled={thinking || !input.trim()}>↑</button>
+              </>
+            )}
           </div>
         )}
       </div>

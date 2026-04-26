@@ -21,7 +21,8 @@ from services.backend.core.pretium_client import (
     PretiumError,
     get_pretium_client,
 )
-from services.backend.data.models import PretiumTransaction, WalletConfig
+from services.backend.data.models import Payment, PretiumTransaction, WalletConfig
+from services.backend.core.paper_trading import connect_wallet, get_user_by_telegram
 
 logger = logging.getLogger("pretium.service")
 
@@ -434,6 +435,11 @@ async def check_transaction_status(
                         wallet_cfg.real_balance_usdc += tx.amount_crypto
                         wallet_cfg.updated_at = datetime.utcnow()
                         session.add(wallet_cfg)
+
+                        # ── Premium unlock ──────────────────────────────────
+                        # Mirrors the webhook path — keeps both code paths in
+                        # sync. Idempotent via synthetic hash, no double-grant.
+                        _grant_premium_for_onramp(tx, session)
                 elif not is_released and tx.status not in ("payment_confirmed", "completed"):
                     tx.status = "payment_confirmed"
 
@@ -445,6 +451,58 @@ async def check_transaction_status(
 
     session.refresh(tx)
     return _tx_to_dict(tx)
+
+
+GLOBAL_PAYMENT_SCOPE = "__global__"
+
+
+def _grant_premium_for_onramp(tx: "PretiumTransaction", session: Session) -> bool:
+    """
+    Write a confirmed Payment row for a completed Pretium on-ramp, granting
+    global premium access.  Uses a stable synthetic tx_hash  `pretium:<tx.id>`
+    so the operation is idempotent — safe to call from both the webhook handler
+    and the status-poll path without risk of double-grants.
+
+    Returns True if a new Payment was created, False if one already existed.
+    """
+    synthetic_hash = f"pretium:{tx.id}"
+
+    # Idempotency check — already granted?
+    existing = session.exec(
+        select(Payment).where(Payment.tx_hash == synthetic_hash)
+    ).first()
+    if existing:
+        return False
+
+    # Resolve (or create) the User row for this telegram_user_id
+    user = get_user_by_telegram(tx.telegram_user_id, session)
+    if not user:
+        # First time this Telegram user appears — create a synthetic wallet row
+        user = connect_wallet(
+            wallet_address=f"telegram:{tx.telegram_user_id}",
+            session=session,
+            telegram_id=tx.telegram_user_id,
+            username=f"telegram_{tx.telegram_user_id}",
+        )
+
+    payment = Payment(
+        user_id=user.id,
+        market_id=GLOBAL_PAYMENT_SCOPE,
+        amount=tx.amount_crypto or 0.0,
+        tx_hash=synthetic_hash,
+        is_confirmed=True,
+        timestamp=datetime.utcnow(),
+    )
+    session.add(payment)
+    # Caller is responsible for session.commit() — we don't commit here so that
+    # the Payment write is atomic with whatever balance/status updates surround it.
+    logger.info("pretium.onramp.premium_granted", extra={
+        "transaction_id": tx.id,
+        "user_id": user.id,
+        "telegram_user_id": tx.telegram_user_id,
+        "synthetic_hash": synthetic_hash,
+    })
+    return True
 
 
 def _tx_to_dict(tx: PretiumTransaction) -> dict:
@@ -524,6 +582,11 @@ async def process_webhook(
                     "transaction_id": tx.id,
                     "usdc_credited": tx.amount_crypto,
                 })
+
+                # ── Premium unlock ──────────────────────────────────────────
+                # Write a Payment row so has_premium_access() returns True for
+                # this user going forward. Idempotent via synthetic hash.
+                _grant_premium_for_onramp(tx, session)
 
             session.add(tx)
             session.commit()

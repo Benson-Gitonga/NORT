@@ -1,17 +1,17 @@
 'use client';
 /**
  * useTier.js
- * Tracks whether the current user is FREE or PREMIUM,
- * and how many free advice calls they've used today.
+ * Tracks whether the current user is FREE or PREMIUM, and whether
+ * they have hit the 15-message batch window limit.
  *
- * FREE:    wallet connected, no payment on record
- * PREMIUM: wallet connected + valid x402 payment verified
+ * Limit behaviour (mirrors ChatGPT free tier):
+ *   - 15 messages shared across /advice + /chat per 6-hour window.
+ *   - Window is anchored to the FIRST message of each batch.
+ *   - ALL 15 slots return at once at window_reset_at — no rolling refill.
+ *   - No counter is shown in the UI; only the lock + reset time when hit.
+ *   - Premium users (confirmed x402 payment) are exempt entirely.
  *
- * Usage count is read from AuditLog via the /agent/usage backend endpoint.
- * The request includes the Privy JWT token so the backend resolves identity
- * the same way as /agent/advice and /x402/verify — preventing tier mismatches
- * after a demo or real payment.
- * Falls back to localStorage for instant UI (no loading flash).
+ * Falls back to localStorage for instant UI on reload (no loading flash).
  */
 import { useState, useEffect, useCallback } from 'react';
 import { BASE } from '@/lib/api';
@@ -22,22 +22,20 @@ let _getAccessToken = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   _getAccessToken = require('@privy-io/react-auth').getAccessToken;
-} catch {}
+} catch { }
 
 const FREE_DAILY_LIMIT = 10;
 
-function getTodayKey() {
-  return new Date().toISOString().slice(0, 10); // "2026-03-29"
-}
-
 export function useTier() {
-  const [tier, setTier]         = useState('free');   // 'free' | 'premium'
-  const [usedToday, setUsed]    = useState(0);
-  const [loading, setLoading]   = useState(true);
+  const [tier, setTier]             = useState('free');
+  const [atLimit, setAtLimit]       = useState(false);
+  const [usedToday, setUsed]        = useState(0);
+  const [windowResetAt, setResetAt] = useState(null);
+  const [loading, setLoading]       = useState(true);
 
   const wallet =
     typeof window !== 'undefined'
-      ? window.localStorage?.getItem('walletAddress')
+      ? (window.localStorage?.getItem('walletAddress') || '').toLowerCase()
       : null;
 
   const refresh = useCallback(async () => {
@@ -50,7 +48,7 @@ export function useTier() {
         try {
           const token = await _getAccessToken();
           if (token) headers['Authorization'] = `Bearer ${token}`;
-        } catch {}
+        } catch { }
       }
 
       const res = await fetch(
@@ -59,22 +57,32 @@ export function useTier() {
       );
       if (res.ok) {
         const data = await res.json();
-        setUsed(data.used_today ?? 0);
-        setTier(data.is_premium ? 'premium' : 'free');
-        // cache locally for instant display on next load
+        const isPremium = data.is_premium ?? false;
+        const used = data.used_recently ?? 0;
+        setTier(isPremium ? 'premium' : 'free');
+        setUsed(used);
+        setAtLimit(!isPremium && (data.at_limit ?? false));
+        setResetAt(data.window_reset_at ?? null);
+        // cache for instant display on next load
         try {
-          localStorage.setItem('nort_tier', data.is_premium ? 'premium' : 'free');
-          localStorage.setItem(`nort_used_${getTodayKey()}`, String(data.used_today ?? 0));
-        } catch {}
+          localStorage.setItem('nort_tier', isPremium ? 'premium' : 'free');
+          localStorage.setItem('nort_at_limit', String(!isPremium && (data.at_limit ?? false)));
+          localStorage.setItem('nort_reset_at', data.window_reset_at ?? '');
+          localStorage.setItem('nort_used', String(used));
+        } catch { }
       }
     } catch {
-      // fallback: read from localStorage
+      // fallback to last-known localStorage values
       try {
-        const cachedTier  = localStorage.getItem('nort_tier') || 'free';
-        const cachedUsed  = parseInt(localStorage.getItem(`nort_used_${getTodayKey()}`) || '0', 10);
+        const cachedTier    = localStorage.getItem('nort_tier') || 'free';
+        const cachedAtLimit = localStorage.getItem('nort_at_limit') === 'true';
+        const cachedReset   = localStorage.getItem('nort_reset_at') || null;
+        const cachedUsed    = parseInt(localStorage.getItem('nort_used') || '0', 10);
         setTier(cachedTier);
+        setAtLimit(cachedAtLimit);
+        setResetAt(cachedReset || null);
         setUsed(cachedUsed);
-      } catch {}
+      } catch { }
     } finally {
       setLoading(false);
     }
@@ -84,13 +92,40 @@ export function useTier() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const onRefresh = () => { refresh(); };
+    const onRefresh = () => {
+      // Clear stale cache so the next fetch always reflects the true backend state
+      try {
+        localStorage.removeItem('nort_tier');
+        localStorage.removeItem('nort_at_limit');
+        localStorage.removeItem('nort_reset_at');
+        localStorage.removeItem('nort_used');
+      } catch { }
+      refresh();
+    };
     window.addEventListener('nort-tier-refresh', onRefresh);
     return () => window.removeEventListener('nort-tier-refresh', onRefresh);
   }, [refresh]);
 
-  const atLimit     = tier === 'free' && usedToday >= FREE_DAILY_LIMIT;
-  const remaining   = tier === 'premium' ? null : Math.max(0, FREE_DAILY_LIMIT - usedToday);
+  /**
+   * optimisticUpgrade — call immediately after a payment is confirmed.
+   * Flips the tier badge to PREMIUM in React state + localStorage right away,
+   * then fires a background refresh to sync with the backend.
+   * This eliminates the visible lag between "Payment confirmed" and the badge
+   * actually changing, which previously required a full /agent/usage round-trip.
+   */
+  const optimisticUpgrade = useCallback(() => {
+    setTier('premium');
+    setAtLimit(false);
+    setResetAt(null);
+    try {
+      localStorage.setItem('nort_tier', 'premium');
+      localStorage.setItem('nort_at_limit', 'false');
+      localStorage.removeItem('nort_reset_at');
+    } catch {}
+    refresh(); // background sync — confirms with backend
+  }, [refresh]);
 
-  return { tier, usedToday, remaining, atLimit, loading, refresh, FREE_DAILY_LIMIT };
+  const remaining = tier === 'premium' ? null : Math.max(0, FREE_DAILY_LIMIT - usedToday);
+
+  return { tier, atLimit, usedToday, remaining, windowResetAt, loading, refresh, optimisticUpgrade, FREE_DAILY_LIMIT };
 }

@@ -155,7 +155,7 @@ export async function getAdvice(marketId, userMessage = null, language = 'en') {
   };
 }
 
-export async function getPremiumAdvice(marketId, userMessage = null) {
+export async function getPremiumAdvice(marketId, userMessage = null, language = 'en') {
   const wallet = getStoredWallet();
   const res = await authFetch(`${BASE}/agent/advice`, {
     method: 'POST',
@@ -164,6 +164,7 @@ export async function getPremiumAdvice(marketId, userMessage = null) {
       market_id: String(marketId),
       telegram_id: wallet || null,
       premium: true,
+      language,
       user_message: userMessage,
     }),
   });
@@ -177,14 +178,11 @@ export async function getPremiumAdvice(marketId, userMessage = null) {
     plan: data.suggested_plan || 'WAIT',
     confidence: data.confidence || 0,
     disclaimer: data.disclaimer || 'Paper trade only. Not financial advice.',
+    stale_data_warning: data.stale_data_warning || null,
+    auto_trade_result: data.auto_trade_result || null,
   };
 }
 
-async function verifyPaymentMock(proof) {
-  if (!proof || proof.length < 4) return { valid: false, error: 'Invalid proof' };
-  // x402 verification — proof is accepted if it meets minimum length
-  return { valid: true, receipt: `receipt_${Date.now()}` };
-}
 
 // ─── PAPER TRADE ─────────────────────────────────────────────────────────────
 
@@ -625,23 +623,38 @@ export async function getChatHistory(marketId) {
 export async function verifyPayment(proof, marketId) {
   const wallet = getStoredWallet();
   if (!proof || proof.length < 4) return { valid: false, error: 'Invalid proof' };
-  if (!marketId) return { valid: false, error: 'Missing market id' };
   if (!wallet) return { valid: false, error: 'No wallet connected' };
 
-  const res = await authFetch(`${BASE}/x402/verify`, {
+  // Global profile upgrade — no market_id needed
+  const isGlobal = !marketId || marketId === '__global__';
+  const endpoint = isGlobal ? `${BASE}/x402/upgrade` : `${BASE}/x402/verify`;
+
+  const body = isGlobal
+    ? { proof, wallet_address: wallet }
+    : { proof, wallet_address: wallet, market_id: String(marketId) };
+
+  const res = await authFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      proof,
-      wallet_address: wallet,
-      market_id: String(marketId),
-    }),
+    body: JSON.stringify(body),
   });
 
   const data = await res.json();
-  if (!res.ok || !data.verified) {
+  // Backend returns { verified, reason } — normalise to { valid, error } for the UI
+  const ok = res.ok && (data.verified === true);
+  if (!ok) {
     return { valid: false, error: data.reason || data.detail || 'Verification failed' };
   }
 
   return { valid: true, receipt: data.tx_hash || proof, details: data };
+}
+
+/**
+ * getUpgradePaymentDetails — fetch treasury address, USDC contract, and price
+ * from the backend so the frontend never hard-codes them.
+ */
+export async function getUpgradePaymentDetails() {
+  const res = await fetch(`${BASE}/x402/payment-info`);
+  if (!res.ok) throw new Error(`Failed to fetch payment info: ${res.status}`);
+  return await res.json();
 }

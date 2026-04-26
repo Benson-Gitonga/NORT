@@ -6,6 +6,7 @@ import { useAuthGuard } from '@/hooks/useAuthGuard';
 import { useTradingMode } from './TradingModeContext';
 import ModeToggleModal from './ModeToggleModal';
 import AuthRequiredModal from './AuthRequiredModal';
+import PremiumGate from './PremiumGate';
 
 // ── Which routes require authentication ───────────────────────────────────────
 // Public routes anyone can visit; everything else will trigger the login modal.
@@ -121,13 +122,15 @@ function ModePill({ onClick }) {
   );
 }
 
-function TierBadge() {
+function TierBadge({ onUpgradeClick }) {
   const { tier, remaining, loading, FREE_DAILY_LIMIT } = useTier();
   if (loading) return null;
   const isPremium = tier === 'premium';
   return (
-    <div
-      title={isPremium ? 'Premium access' : `${remaining} free advice calls remaining today`}
+    <button
+      id="tier-badge-btn"
+      onClick={!isPremium ? onUpgradeClick : undefined}
+      title={isPremium ? 'Premium access — unlimited AI calls' : `${remaining} free calls remaining · Click to upgrade`}
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         padding: '3px 10px', borderRadius: 20,
@@ -137,13 +140,14 @@ function TierBadge() {
         fontSize: 11, fontFamily: 'DM Mono, monospace', fontWeight: 600,
         letterSpacing: '0.04em', textTransform: 'uppercase',
         whiteSpace: 'nowrap', flexShrink: 0, userSelect: 'none',
+        cursor: isPremium ? 'default' : 'pointer',
+        transition: 'all 0.2s',
       }}
     >
       {isPremium ? '⚡ PREMIUM' : `FREE · ${remaining ?? 0}/${FREE_DAILY_LIMIT}`}
-    </div>
+    </button>
   );
 }
-
 // ── NavItem — renders as Link (public) or guarded button (protected) ──────────
 function NavItem({ item, active, isAuthed, onGuardedClick, mobile = false }) {
   const isActive = active === item.key;
@@ -213,6 +217,7 @@ export default function Navbar({ active }) {
   const { user, isAuthed } = useAuth();
   const initials = user?.firstName?.slice(0, 2).toUpperCase() || 'NJ';
   const [showModeModal, setShowModeModal] = useState(false);
+  const [showUpgrade, setShowUpgrade]     = useState(false);
 
   const {
     pendingRoute,
@@ -224,6 +229,11 @@ export default function Navbar({ active }) {
 
   return (
     <>
+      <div className="nav-top-mobile">
+        <Link href="/" className="nav-logo">NORT</Link>
+        <TierBadge onUpgradeClick={() => setShowUpgrade(true)} />
+      </div>
+
       <nav className="nav-mobile">
         {NAV_ITEMS.map(item => (
           <NavItem
@@ -268,6 +278,7 @@ export default function Navbar({ active }) {
           </div>
 
           <div className="nav-right">
+            <TierBadge onUpgradeClick={() => setShowUpgrade(true)} />
             <ModePill onClick={() => setShowModeModal(true)} />
 
             <div className="live-pill">
@@ -318,6 +329,13 @@ export default function Navbar({ active }) {
 
       {/* ── Mode toggle modal ── */}
       {showModeModal && <ModeToggleModal onClose={() => setShowModeModal(false)} />}
+
+      {/* ── Premium upgrade modal ── */}
+      <PremiumGate
+        open={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        reason="feature"
+      />
 
       {/* ── Auth required modal (shown when guarded route clicked) ── */}
       {pendingRoute && (

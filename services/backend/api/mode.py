@@ -60,7 +60,7 @@ def _resolve_config(wallet_address, telegram_user_id, session):
 # ─── ENDPOINTS ───────────────────────────────────────────────────────────────
 
 @router.get("/wallet/mode")
-def get_mode(
+async def get_mode(
     wallet_address: Optional[str] = None,
     telegram_user_id: Optional[str] = None,
     session: Session = Depends(get_session),
@@ -81,7 +81,7 @@ def get_mode(
 
 
 @router.post("/wallet/mode")
-def set_mode(
+async def set_mode(
     request: ModeToggleRequest,
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
