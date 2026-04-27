@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException, Request, Security, status
@@ -26,6 +26,22 @@ def _extract_wallet_address(data: Dict[str, Any]) -> Optional[str]:
         if account.get("type") == "wallet" and account.get("address"):
             return account["address"]
     return None
+
+
+def _extract_wallet_addresses(data: Dict[str, Any]) -> List[str]:
+    wallets: List[str] = []
+
+    wallet_obj = data.get("wallet")
+    if isinstance(wallet_obj, dict) and wallet_obj.get("address"):
+        wallets.append(str(wallet_obj["address"]).lower())
+
+    linked_accounts = data.get("linked_accounts") or []
+    for account in linked_accounts:
+        if account.get("type") == "wallet" and account.get("address"):
+            wallets.append(str(account["address"]).lower())
+
+    # Preserve order but dedupe
+    return list(dict.fromkeys(wallets))
 
 
 async def _verify_with_privy(token: str) -> Dict[str, Any]:
@@ -96,11 +112,13 @@ async def get_current_user(
         return cached["data"]
 
     data = await _verify_with_privy(token)
+    wallets = _extract_wallet_addresses(data)
     wallet = _extract_wallet_address(data)
     if not wallet:
         header_wallet = (request.headers.get("x-wallet-address") or "").strip().lower()
         if header_wallet and header_wallet not in {"null", "undefined"}:
             wallet = header_wallet
+            wallets = list(dict.fromkeys([header_wallet, *wallets]))
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -108,6 +126,7 @@ async def get_current_user(
             )
 
     data["wallet"] = wallet.lower()
+    data["wallets"] = wallets or [wallet.lower()]
     _token_cache[token] = {
         "data": data,
         "expires_at": now + 900,  # 15 minutes
