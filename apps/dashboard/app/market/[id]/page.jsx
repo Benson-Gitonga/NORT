@@ -325,14 +325,32 @@ export default function MarketDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Fetch price history when interval changes (no page reload)
+  // Fetch price history when interval changes — retries up to 3x if backend is cold
   useEffect(() => {
     if (!id) return;
-    setChartLoading(true);
-    getMarketPriceHistory(id, priceInterval)
-      .then(prices => setPriceHistory(prices || []))
-      .catch(() => setPriceHistory([]))
-      .finally(() => setChartLoading(false));
+    let cancelled = false;
+
+    const load = async (attempt = 1) => {
+      setChartLoading(true);
+      try {
+        const prices = await getMarketPriceHistory(id, priceInterval);
+        if (cancelled) return;
+        if (prices.length < 2 && attempt < 3) {
+          setTimeout(() => load(attempt + 1), 3000);
+        } else {
+          setPriceHistory(prices || []);
+          setChartLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setPriceHistory([]);
+          setChartLoading(false);
+        }
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
   }, [id, priceInterval]);
 
   const payout = useMemo(() => {
@@ -347,10 +365,8 @@ export default function MarketDetailPage() {
   );
 
   const isResolved    = m && (m.yes <= 2 || m.yes >= 98);
-  const isLiveMarket  = m && !isResolved && (
-    /\b(5 min|10 min|1 hour|today|tonight|this week|live)\b/i.test(m.q || '') ||
-    (m.yes > 35 && m.yes < 65)
-  );
+  const isLiveMarket  = m && !isResolved &&
+    /\b(5 min|10 min|1 hour|today|tonight|this week|live)\b/i.test(m.q || '');
   const chartData = priceHistory.length > 1
     ? priceHistory
     : [48, 51, 49, 53, 58, 55, 61, 65, 63, 67];
@@ -393,25 +409,7 @@ export default function MarketDetailPage() {
                         Go to Live Market →
                       </button>
                     )}
-                    {m.id && (
-                      <a
-                        href={`https://polymarket.com/event/${m.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '6px 14px', borderRadius: 100,
-                          border: '1px solid rgba(132,130,130,0.3)',
-                          background: 'rgba(255,255,255,0.03)',
-                          fontFamily: 'DM Mono,monospace', fontSize: 11,
-                          color: '#848282', textDecoration: 'none', transition: 'all 0.2s',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(52,192,127,0.45)'; e.currentTarget.style.color = '#34C07F'; }}
-                        onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(132,130,130,0.3)';  e.currentTarget.style.color = '#848282'; }}
-                      >
-                        ↗ Polymarket
-                      </a>
-                    )}
+
                   </div>
                 </div>
 
