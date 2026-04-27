@@ -163,7 +163,7 @@ def get_market(market_id: str):
 def get_price_history(
     market_id: str,
     interval: str = Query(default="1w", description="Time interval: 1d, 1w, 1m, 6m, 1y, all"),
-    fidelity: int = Query(default=60, description="Data point resolution in minutes"),
+    fidelity: Optional[int] = Query(default=None, description="Data point resolution in minutes"),  # market-p3: fidelity now defaults to None
 ):
     # market-p: Verify the market exists in our DB first
     with Session(engine) as session:

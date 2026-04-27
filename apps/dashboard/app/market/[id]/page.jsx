@@ -28,18 +28,35 @@ function SVGLineChart({ data = [], isLive = false }) {
   useEffect(() => { setLiveData(data); }, [data]);
 
   useEffect(() => {
-    if (!isLive || liveData.length < 2) return;
-    const id = setInterval(() => {
-      setLiveData(prev => {
-        const last  = prev[prev.length - 1];
-        const next  = Math.max(1, Math.min(99, +(last + (Math.random() - 0.48) * 0.6).toFixed(1)));
-        return [...prev.slice(-199), next];
-      });
-    }, 4000);
-    return () => clearInterval(id);
-  }, [isLive, liveData.length]);
+    if (!isLive || data.length < 2) return;
+    setLiveData(data);
+  }, [isLive, data]);
 
-  const pts = isLive ? liveData : data;
+  const PL = 60, PR = 60, PT = 35, PB = 45, W = 1000, H = 380; // market-p3: increased dimensions for better spacing
+  const IW = W - PL - PR;
+
+  // market-p3: Enforce constant point count for smooth transitions
+  const pts = useMemo(() => {
+    const raw = isLive ? liveData : data;
+    if (!raw || raw.length < 2) return [];
+    
+    const targetCount = 120;
+    if (raw.length === targetCount) return raw;
+    if (raw.length > targetCount) return raw.slice(-targetCount);
+    
+    // Pad start with the first value to reach targetCount
+    const firstVal = raw[0];
+    const padding = Array(targetCount - raw.length).fill(firstVal);
+    return [...padding, ...raw];
+  }, [isLive, liveData, data]);
+
+  const handleMouseMove = useCallback(e => {
+    if (!svgRef.current) return;
+    const r     = svgRef.current.getBoundingClientRect();
+    const ratio = (e.clientX - r.left) / r.width * W - PL;
+    const idx   = Math.round((ratio / IW) * (pts.length - 1));
+    setHoverIdx(Math.max(0, Math.min(pts.length - 1, idx)));
+  }, [pts.length, IW, W, PL]);
 
   if (!pts || pts.length < 2) return (
     <div style={{
@@ -51,8 +68,6 @@ function SVGLineChart({ data = [], isLive = false }) {
     </div>
   );
 
-  const PL = 46, PR = 56, PT = 32, PB = 40, W = 900, H = 300;
-  const IW = W - PL - PR;
   const IH = H - PT - PB;
 
   const first    = pts[0];
@@ -91,13 +106,7 @@ function SVGLineChart({ data = [], isLive = false }) {
     return { idx, x: toX(idx) };
   });
 
-  const handleMouseMove = useCallback(e => {
-    if (!svgRef.current) return;
-    const r     = svgRef.current.getBoundingClientRect();
-    const ratio = (e.clientX - r.left) / r.width * W - PL;
-    const idx   = Math.round((ratio / IW) * (pts.length - 1));
-    setHoverIdx(Math.max(0, Math.min(pts.length - 1, idx)));
-  }, [pts.length]);
+
 
   const [lx, ly] = coords[coords.length - 1];
   const hp       = hoverIdx !== null ? coords[hoverIdx] : null;
@@ -190,9 +199,12 @@ function SVGLineChart({ data = [], isLive = false }) {
 
         {/* Area fill + price line */}
         <g clipPath="url(#chart-clip)">
-          <path d={areaPath} fill="url(#area-grad)" />
-          <path d={linePath} fill="none" stroke={trend} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" filter="url(#line-glow)" />
+          <path className="chart-area" d={areaPath} fill="url(#area-grad)" />
+          <path className="chart-path" d={linePath} fill="none" stroke={trend} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" filter="url(#line-glow)" />
         </g>
+        
+        {/* Reference dot for current price (only if not hovering) */}
+        {!hp && <circle className="chart-dot" cx={lx} cy={ly} r="3.5" fill={trend} />}
 
         {/* Current price dot */}
         <circle cx={lx} cy={ly} r={isLive ? 10 : 9} fill={trend} opacity="0.14" filter="url(#dot-glow)"
@@ -215,6 +227,9 @@ function SVGLineChart({ data = [], isLive = false }) {
 
       <style>{`
         @keyframes livePulse { 0%,100% { r:10; opacity:.14; } 50% { r:14; opacity:.08; } }
+        .chart-path { transition: d 0.6s ease-in-out; }
+        .chart-area { transition: d 0.6s ease-in-out; }
+        .chart-dot  { transition: all 0.6s ease-in-out; }
       `}</style>
     </div>
   );
@@ -301,11 +316,16 @@ export default function MarketDetailPage() {
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [tradeSide, setTradeSide]           = useState('yes');
   const [priceHistory, setPriceHistory]     = useState([]);
+  const [livePoints, setLivePoints]         = useState([]);
   const [priceInterval, setPriceInterval]   = useState('1w');
   const [chartLoading, setChartLoading]     = useState(false);
   const [liveMarket, setLiveMarket]         = useState(null);
 
   useRequireAuth();
+
+  const isResolved    = m && (m.yes <= 2 || m.yes >= 98);
+  const isLiveMarket  = m && !isResolved &&
+    /\b(5 min|10 min|1 hour|today|tonight|this week|live)\b/i.test(m.q || '');
 
   // Fetch market metadata once on mount
   useEffect(() => {
@@ -324,6 +344,25 @@ export default function MarketDetailPage() {
       .catch(e => setError(e.message || 'Market not found'))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // market-p: Poll market metadata for live price updates every 15s
+  useEffect(() => {
+    if (!id || !isLiveMarket || isResolved) return;
+    const pollId = setInterval(() => {
+      getMarket(id)
+        .then(md => {
+          setM(prev => {
+            if (!prev) return md;
+            if (md.yes !== prev.yes) {
+              setLivePoints(lp => [...lp, md.yes].slice(-50)); // Keep last 50 session points
+            }
+            return { ...prev, yes: md.yes, vol: md.vol };
+          });
+        })
+        .catch(() => {});
+    }, 5000); // market-p3: fast polling for session-live movement (5s)
+    return () => clearInterval(pollId);
+  }, [id, isLiveMarket, isResolved]);
 
   // Fetch price history when interval changes — retries up to 3x if backend is cold
   useEffect(() => {
@@ -364,12 +403,23 @@ export default function MarketDetailPage() {
     [payout, amount]
   );
 
-  const isResolved    = m && (m.yes <= 2 || m.yes >= 98);
-  const isLiveMarket  = m && !isResolved &&
-    /\b(5 min|10 min|1 hour|today|tonight|this week|live)\b/i.test(m.q || '');
-  const chartData = priceHistory.length > 1
-    ? priceHistory
-    : [48, 51, 49, 53, 58, 55, 61, 65, 63, 67];
+
+  const chartData = useMemo(() => { // market-p3: merge history with live session points for accuracy
+    let combined = [];
+    if (priceHistory && priceHistory.length > 1) {
+      combined = [...priceHistory];
+    }
+    
+    // Append session-live points
+    if (livePoints.length > 0) {
+      combined = [...combined, ...livePoints];
+    } else if (isLiveMarket && m?.yes !== undefined && combined.length > 0) {
+      // Ensure the very last point is always current if no livePoints yet
+      combined = [...combined, m.yes];
+    }
+    
+    return combined;
+  }, [priceHistory, livePoints, isLiveMarket, m?.yes]);
 
   return (
     <AuthGate softGate>
