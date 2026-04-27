@@ -44,44 +44,125 @@ const getStoredWallet = () => {
   catch { return null; }
 };
 
-// ─── authFetch ────────────────────────────────────────────────────────────────
-export async function authFetch(endpoint, options = {}) {
-  const headers = new Headers(options.headers || {});
+const AUTH_STATE_EVENT = 'nort_auth_state';
+const SESSION_EXPIRED_EVENT = 'session_expired';
+const TOKEN_POLL_ATTEMPTS = 6;
+const TOKEN_POLL_DELAY_MS = 200;
+const AUTH_READY_TIMEOUT_MS = 4000;
 
-  if (typeof window !== 'undefined') {
-    // 1. Attach Bearer token
-    const token = await getToken();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-    } else {
-      console.warn(`[authFetch] No Privy token for ${endpoint}`);
-    }
+let accessTokenCache = null;
+let accessTokenCachedAt = 0;
+let sessionExpiredNotified = false;
 
-    // 2. Attach wallet address — backend needs this since Privy JWTs
-    //    don't embed linked_accounts / wallet addresses in the payload
-    const wallet = getStoredWallet();
-    if (wallet) {
-      headers.set('X-Wallet-Address', wallet.toLowerCase());
-    }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isValidToken = (token) =>
+  !!token && token !== 'null' && token !== 'undefined' && token.split('.').length === 3;
+
+const buildUnauthorizedResponse = (detail = 'Unauthorized') =>
+  new Response(JSON.stringify({ detail }), {
+    status: 401,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+const getAuthState = () => {
+  if (typeof window === 'undefined') return { ready: false, isAuthed: false };
+  return window.__NORT_AUTH_STATE || { ready: false, isAuthed: false };
+};
+
+const notifySessionExpired = (reason, endpoint, status = 401) => {
+  if (typeof window === 'undefined' || sessionExpiredNotified) return;
+  sessionExpiredNotified = true;
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, {
+    detail: { reason, endpoint, status, at: Date.now() },
+  }));
+};
+
+const waitForAuthReady = async (timeoutMs = AUTH_READY_TIMEOUT_MS) => {
+  if (typeof window === 'undefined') return { ready: false, isAuthed: false };
+  const current = getAuthState();
+  if (current.ready) return current;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener(AUTH_STATE_EVENT, onAuthState);
+      clearTimeout(timer);
+      resolve(state || getAuthState());
+    };
+    const onAuthState = (event) => {
+      const detail = event?.detail || getAuthState();
+      if (detail.ready) finish(detail);
+    };
+    const timer = setTimeout(() => finish(getAuthState()), timeoutMs);
+    window.addEventListener(AUTH_STATE_EVENT, onAuthState);
+  });
+};
+
+const resolveAccessToken = async () => {
+  const now = Date.now();
+  if (isValidToken(accessTokenCache) && (now - accessTokenCachedAt) < 30_000) {
+    return accessTokenCache;
   }
 
-  let res = await fetch(endpoint, { ...options, headers });
+  for (let i = 0; i < TOKEN_POLL_ATTEMPTS; i += 1) {
+    try {
+      const token = await getAccessToken();
+      if (isValidToken(token)) {
+        accessTokenCache = token;
+        accessTokenCachedAt = Date.now();
+        sessionExpiredNotified = false;
+        return token;
+      }
+    } catch {}
+    await sleep(TOKEN_POLL_DELAY_MS);
+  }
 
-  // Single retry on 401 — Privy may have just refreshed the token
-  if (res.status === 401 && typeof window !== 'undefined') {
-    console.warn(`[authFetch] 401 on ${endpoint} — retrying once with fresh token`);
-    await new Promise(r => setTimeout(r, 400));
+  accessTokenCache = null;
+  accessTokenCachedAt = 0;
+  return null;
+};
 
-    const freshToken = await getToken();
-    if (freshToken) headers.set('Authorization', `Bearer ${freshToken}`);
+export async function authFetch(endpoint, options = {}) {
+  const {
+    requireAuth = true,
+    ...requestOptions
+  } = options;
+  const headers = new Headers(requestOptions.headers || {});
 
-    res = await fetch(endpoint, { ...options, headers });
+  if (typeof window === 'undefined') {
+    return fetch(endpoint, { ...requestOptions, headers });
+  }
 
-    if (res.status === 401) {
-      console.error(`[authFetch] 401 persists after retry — dispatching session_expired`);
-      dispatchSessionExpired();
-      return res;
+  if (requireAuth) {
+    const authState = await waitForAuthReady();
+    if (!authState.ready || !authState.isAuthed) {
+      notifySessionExpired('auth_not_ready_or_not_authed', endpoint, 401);
+      return buildUnauthorizedResponse('Authentication required');
     }
+
+    const token = await resolveAccessToken();
+    if (!token) {
+      notifySessionExpired('missing_privy_access_token', endpoint, 401);
+      return buildUnauthorizedResponse('Missing Privy access token');
+    }
+
+    headers.set('Authorization', `Bearer ${token}`);
+    window.__NORT_LAST_ACCESS_TOKEN = token;
+  } else {
+    try {
+      const optionalToken = await getAccessToken();
+      if (isValidToken(optionalToken)) headers.set('Authorization', `Bearer ${optionalToken}`);
+    } catch {}
+  }
+
+  const res = await fetch(endpoint, { ...requestOptions, headers });
+  if (requireAuth && res.status === 401) {
+    accessTokenCache = null;
+    accessTokenCachedAt = 0;
+    notifySessionExpired('backend_rejected_token', endpoint, 401);
   }
 
   return res;
@@ -102,7 +183,7 @@ const abbr = (n) => {
 
 export async function getSignals(filter = 'all', category = 'crypto') {
   const categoryParam = category !== 'all' ? `&category=${category}` : '';
-  const sigRes = await authFetch(`${BASE}/signals/?top=50${categoryParam}`);
+  const sigRes = await authFetch(`${BASE}/signals/?top=50${categoryParam}`, { requireAuth: false });
   if (!sigRes.ok) throw new Error(`Failed to load signals`);
 
   const sigData = await sigRes.json();
@@ -140,7 +221,7 @@ export async function getSignals(filter = 'all', category = 'crypto') {
 // ─── MARKETS ─────────────────────────────────────────────────────────────────
 
 export async function getMarket(id) {
-  const res = await authFetch(`${BASE}/markets/${id}`);
+  const res = await authFetch(`${BASE}/markets/${id}`, { requireAuth: false });
   if (!res.ok) throw new Error(`Market ${id} not found`);
   const m = await res.json();
   return {
@@ -156,7 +237,7 @@ export async function getMarket(id) {
 }
 
 export async function listMarkets() {
-  const res = await authFetch(`${BASE}/markets/?limit=500`);
+  const res = await authFetch(`${BASE}/markets/?limit=500`, { requireAuth: false });
   if (!res.ok) throw new Error(`Markets authFetch failed: ${res.status}`);
   const data = await res.json();
   return (data.markets || []).map(m => ({
@@ -172,7 +253,7 @@ export async function listMarkets() {
 }
 
 export async function refreshMarkets() {
-  const res = await authFetch(`${BASE}/markets/refresh`);
+  const res = await authFetch(`${BASE}/markets/refresh`, { requireAuth: false });
   if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
   return await res.json();
 }

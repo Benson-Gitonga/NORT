@@ -48,7 +48,11 @@ def get_mode(
     if not wallet_address and not telegram_user_id:
         raise HTTPException(400, "Provide wallet_address or telegram_user_id.")
 
-    config = _resolve_config(wallet_address, telegram_user_id, session)
+    requested_wallet = (wallet_address or current_user["wallet"]).lower()
+    if requested_wallet != current_user["wallet"].lower():
+        raise HTTPException(status_code=403, detail="Cannot access mode for another wallet")
+
+    config = _resolve_config(requested_wallet, telegram_user_id, session)
     return {
         "trading_mode":       config.trading_mode,
         "real_balance_usdc":  round(config.real_balance_usdc, 2),
@@ -72,6 +76,8 @@ def set_mode(
         _assert_owns_wallet(request.wallet_address, current_user)
 
     config = _resolve_config(request.wallet_address, request.telegram_user_id, session)
+
+    config = _resolve_config(requested_wallet, request.telegram_user_id, session)
 
     requested_mode = request.mode.lower().strip()
     if requested_mode not in ("paper", "real"):
