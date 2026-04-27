@@ -12,9 +12,9 @@ from services.backend.api.advice import router as advice_router
 from services.backend.api.leaderboard import router as leaderboard_router
 from services.backend.api.fx import router as fx_router
 from services.backend.api.mode import router as mode_router
-from services.backend.api.bridge import router as bridge_router            # Phase 2
-from services.backend.api.pretium import router as pretium_router          # Phase 3
-from services.backend.api.real_trades import router as real_trades_router  # Phase 4
+from services.backend.api.bridge import router as bridge_router
+from services.backend.api.pretium import router as pretium_router
+from services.backend.api.real_trades import router as real_trades_router
 from services.backend.api.telegram import router as telegram_router
 from services.backend.api.x402 import router as x402_router
 from services.backend.data.database import init_db, engine
@@ -24,7 +24,6 @@ from services.backend.data.database import init_db, engine
 async def lifespan(app: FastAPI):
     print("Initializing Database...")
     init_db()
-
     print("Syncing markets from Polymarket on startup...")
     try:
         with Session(engine) as session:
@@ -32,7 +31,6 @@ async def lifespan(app: FastAPI):
         print("Market sync complete.")
     except Exception as e:
         print(f"Market sync failed (will retry on first /markets request): {e}")
-
     yield
     print("Shutting down...")
 
@@ -47,52 +45,34 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-# Core origins always allowed. Add extras via CORS_ORIGINS env var (comma-separated).
 _CORE_ORIGINS = [
-    "https://www.nortapp.online",           # production (www)
-    "https://nortapp.online",               # production (apex — no www)
-    "https://nort-landing-nine.vercel.app", # external landing page
-    "http://localhost:3000",                # local dev
-    "http://localhost:3001",                # local dev alt port
+    "https://www.nortapp.online",
+    "https://nortapp.online",
+    "https://nort-landing-nine.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:3001",
 ]
 _extra = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-ALLOWED_ORIGINS = list(dict.fromkeys(_CORE_ORIGINS + _extra))  # dedup, preserve order
+ALLOWED_ORIGINS = list(dict.fromkeys(_CORE_ORIGINS + _extra))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    # X-Wallet-Address is sent by authFetch so the backend can resolve the wallet
+    # from the JWT without calling the Privy REST API on every request.
+    allow_headers=["*", "Authorization", "Content-Type", "X-Wallet-Address"],
 )
 
 # ─── ROUTERS ─────────────────────────────────────────────────────────────────
-app.include_router(markets_router)
-app.include_router(markets_router,       prefix="/api")
-app.include_router(signals_router)
-app.include_router(signals_router,       prefix="/api")
-app.include_router(trades_router)
-app.include_router(trades_router,        prefix="/api")
-app.include_router(wallet_router)
-app.include_router(wallet_router,        prefix="/api")
-app.include_router(advice_router)
-app.include_router(advice_router,        prefix="/api")
-app.include_router(telegram_router)
-app.include_router(telegram_router,      prefix="/api")
-app.include_router(x402_router)
-app.include_router(x402_router,          prefix="/api")
-app.include_router(leaderboard_router)
-app.include_router(leaderboard_router,   prefix="/api")
-app.include_router(fx_router)
-app.include_router(fx_router,            prefix="/api")
-app.include_router(mode_router)
-app.include_router(mode_router,          prefix="/api")
-app.include_router(bridge_router)
-app.include_router(bridge_router,        prefix="/api")
-app.include_router(pretium_router)
-app.include_router(pretium_router,       prefix="/api")
-app.include_router(real_trades_router)   # Phase 4 — real trading
-app.include_router(real_trades_router,   prefix="/api")
+for router in [
+    markets_router, signals_router, trades_router, wallet_router,
+    advice_router, telegram_router, x402_router, leaderboard_router,
+    fx_router, mode_router, bridge_router, pretium_router, real_trades_router,
+]:
+    app.include_router(router)
+    app.include_router(router, prefix="/api")
 
 
 @app.api_route("/", methods=["GET", "HEAD"])

@@ -1,6 +1,25 @@
 "use client";
-import { PrivyProvider } from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { base, polygon } from "viem/chains";
+import { useEffect } from "react";
+import { TokenStore } from "@/lib/tokenStore";
+
+/**
+ * TokenRegistrar — inner component that lives inside PrivyProvider.
+ * Registers the real getAccessToken function into TokenStore
+ * the moment Privy is ready, so lib/api.js can call it without hooks.
+ */
+function TokenRegistrar() {
+  const { getAccessToken, ready } = usePrivy();
+
+  useEffect(() => {
+    if (ready && getAccessToken) {
+      TokenStore.set(getAccessToken);
+    }
+  }, [ready, getAccessToken]);
+
+  return null;
+}
 
 export default function PrivyProvidersInner({ children }) {
   const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID || "";
@@ -10,8 +29,6 @@ export default function PrivyProvidersInner({ children }) {
       appId={appId}
       config={{
         // ─── CHAIN CONFIG ─────────────────────────────────────────────────
-        // defaultChain: Base — all embedded wallets are created on Base.
-        // Polygon is supported for future Polymarket bridging (Phase 2).
         defaultChain: base,
         supportedChains: [base, polygon],
 
@@ -25,7 +42,7 @@ export default function PrivyProvidersInner({ children }) {
           showWalletUIs: true,
         },
 
-        // ─── EXTERNAL WALLETS (MetaMask, Coinbase, Rainbow) ───────────────
+        // ─── EXTERNAL WALLETS ─────────────────────────────────────────────
         externalWallets: {
           coinbaseWallet: {
             connectionOptions: "smartWalletOnly",
@@ -40,6 +57,8 @@ export default function PrivyProvidersInner({ children }) {
         },
       }}
     >
+      {/* Registers getAccessToken into TokenStore once Privy is ready */}
+      <TokenRegistrar />
       {children}
     </PrivyProvider>
   );
