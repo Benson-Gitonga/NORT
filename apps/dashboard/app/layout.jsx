@@ -14,6 +14,13 @@ export const metadata = {
   },
 };
 
+export const metadata = {
+  other: {
+    'base:app_id': '69efacf4f464a4292f34e647',
+  },
+};
+
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
