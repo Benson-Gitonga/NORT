@@ -7,6 +7,12 @@ tavily-python    # Tavily Search API (replaces DuckDuckGo)
 psycopg2-binary  # PostgreSQL driver for Neon
 svix             # Webhook verification for Privy (whsec_ signing key)
 slowapi          # Rate limiting dependency
+
+# ─── JWT verification (Privy JWKS offline token check) ───────────────────────
+PyJWT[crypto]>=2.8.0  # PyJWT with cryptography extras — needed for ES256 + PyJWKClient
+cryptography>=41.0.0  # Required by PyJWT[crypto] for ES256 key handling
+
+# ─── Phase 4: Real trading on Polymarket CLOB ────────────────────────────────
 py-clob-client   # Polymarket CLOB client — EIP-712 order signing
 web3             # Ethereum / Polygon RPC calls (balance checks, tx verification)
 eth-account      # Wallet key generation + signing utilities
