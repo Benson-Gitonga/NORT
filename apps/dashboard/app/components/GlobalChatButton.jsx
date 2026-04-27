@@ -17,6 +17,13 @@ const INIT_MSG = {
 export default function GlobalChatButton() {
   const { isAuthed, walletAddress } = useAuth();
   const [open, setOpen]         = useState(false);
+
+  // Listen for external "open-nortbot" events (e.g. from ASK NORT BOT button)
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener('open-nortbot', handler);
+    return () => window.removeEventListener('open-nortbot', handler);
+  }, []);
   const [messages, setMessages] = useState([INIT_MSG]);
   const [input, setInput]       = useState('');
   const [thinking, setThinking] = useState(false);
