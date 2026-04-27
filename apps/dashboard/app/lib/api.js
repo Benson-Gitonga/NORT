@@ -143,6 +143,22 @@ export async function getMarket(id) {
   };
 }
 
+// market-p: Fetches real YES price history for a market from the backend,
+// which in turn calls Polymarket's CLOB API. Returns a plain number array
+// (values 0-100) ready to pass directly into SVGLineChart's data prop.
+// Falls back to empty array — page.jsx handles the placeholder fallback.
+export async function getMarketPriceHistory(id, interval = '1w') {
+  try {
+    const res = await authFetch(`${BASE}/markets/${id}/price-history?interval=${interval}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.prices || []; // market-p: flat number array e.g. [48.2, 51.0, 55.3, ...]
+  } catch {
+    return []; // market-p: silent fail — chart will use placeholder data
+  }
+}
+// ─── end market-p ─────────────────────────────────────────────────────────────
+
 export async function listMarkets() {
   const res = await authFetch(`${BASE}/markets/?limit=500`);
   if (!res.ok) throw new Error(`Markets authFetch failed: ${res.status}`);

@@ -347,3 +347,75 @@ def _parse_market_item(
 
 # Keep old name as alias so any other code that imports it still works
 parse_market = _parse_market_item
+
+
+# ─── market-p: PRICE HISTORY ─────────────────────────────────────────────────
+# Fetches historical YES price data for a market from Polymarket's CLOB API.
+# Flow: condition_id → token_id (via Gamma API) → price history (via CLOB API)
+# The CLOB API uses token_id (clobTokenIds[0]) not the condition ID stored in our DB.
+
+CLOB_API = "https://clob.polymarket.com"
+
+def fetch_price_history(market_id: str, interval: str = "1w", fidelity: int = 60) -> list:
+    """
+    market-p: Given a Polymarket condition ID (what we store as market.id),
+    resolve the YES token_id then return price history as a list of floats (0-100).
+    Returns empty list if anything fails — frontend falls back to placeholder.
+    """
+    try:
+        # market-p: Step 1 — resolve token_id from condition ID via Gamma API
+        with httpx.Client(timeout=10.0) as client:
+            gamma_res = client.get(f"{GAMMA_API}/markets", params={"conditionId": market_id})
+            gamma_res.raise_for_status()
+            gamma_data = gamma_res.json()
+
+        # market-p: Gamma returns a list; grab the first match
+        markets_list = gamma_data if isinstance(gamma_data, list) else gamma_data.get("markets", [])
+        if not markets_list:
+            print(f"[market-p] No Gamma market found for condition ID: {market_id}")
+            return []
+
+        raw = markets_list[0]
+
+        # market-p: clobTokenIds is a JSON string like '["0xabc...", "0xdef..."]'
+        # Index 0 = YES token, index 1 = NO token
+        clob_token_ids_raw = raw.get("clobTokenIds", "[]")
+        if isinstance(clob_token_ids_raw, str):
+            clob_token_ids = json.loads(clob_token_ids_raw)
+        else:
+            clob_token_ids = clob_token_ids_raw
+
+        if not clob_token_ids:
+            print(f"[market-p] No clobTokenIds for market: {market_id}")
+            return []
+
+        yes_token_id = clob_token_ids[0]  # market-p: YES token is always index 0
+
+        # market-p: Step 2 — fetch price history from CLOB API using YES token_id
+        with httpx.Client(timeout=10.0) as client:
+            clob_res = client.get(
+                f"{CLOB_API}/prices-history",
+                params={
+                    "market":   yes_token_id,
+                    "interval": interval,
+                    "fidelity": fidelity,
+                }
+            )
+            clob_res.raise_for_status()
+            clob_data = clob_res.json()
+
+        # market-p: Response shape: { "history": [{ "t": timestamp, "p": price }, ...] }
+        history = clob_data.get("history", [])
+        if not history:
+            print(f"[market-p] Empty price history for token: {yes_token_id}")
+            return []
+
+        # market-p: Convert decimal prices (0.0-1.0) to cents (0-100) for the chart
+        prices = [round(float(point["p"]) * 100, 1) for point in history if "p" in point]
+        print(f"[market-p] Got {len(prices)} price points for market {market_id}")
+        return prices
+
+    except Exception as e:
+        print(f"[market-p] fetch_price_history failed for {market_id}: {e}")
+        return []
+# ─── end market-p ─────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ from services.backend.data.models import Market
 from services.backend.core.polymarket import (
     fetch_short_term_crypto_markets,
     fetch_sports_markets,
+    fetch_price_history,  # market-p: price history function
 )
 
 router = APIRouter(prefix="/markets", tags=["Markets"], redirect_slashes=False)
@@ -153,6 +154,32 @@ def get_market(market_id: str):
         if not market:
             raise HTTPException(status_code=404, detail=f"Market {market_id} not found")
         return market_to_response(market)
+
+
+# market-p: New endpoint — returns real YES price history for the chart
+# Calls Polymarket CLOB via fetch_price_history() in core/polymarket.py
+# Falls back gracefully to empty list if Polymarket is unreachable
+@router.get("/{market_id}/price-history")
+def get_price_history(
+    market_id: str,
+    interval: str = Query(default="1w", description="Time interval: 1d, 1w, 1m, 6m, 1y, all"),
+    fidelity: int = Query(default=60, description="Data point resolution in minutes"),
+):
+    # market-p: Verify the market exists in our DB first
+    with Session(engine) as session:
+        market = session.get(Market, market_id)
+        if not market:
+            raise HTTPException(status_code=404, detail=f"Market {market_id} not found")
+
+    # market-p: Fetch from Polymarket CLOB — returns [] if anything fails
+    prices = fetch_price_history(market_id, interval=interval, fidelity=fidelity)
+    return {
+        "market_id": market_id,
+        "interval":  interval,
+        "prices":    prices,           # list of floats 0-100
+        "count":     len(prices),
+    }
+# ─── end market-p ─────────────────────────────────────────────────────────────
 
 
 def market_to_response(market: Market) -> dict:
