@@ -1,17 +1,5 @@
 """
 Trading Mode Toggle API
-
-GET  /wallet/mode  — returns current mode + balance info for the UI
-POST /wallet/mode  — switches mode with a user-confirmation warning
-
-Switching paper → real:
-  - No KYC required
-  - No minimum balance required
-  - Only gate: confirmed=True must be sent (user acknowledged the warning)
-  - Frontend shows a clear warning modal before sending confirmed=True
-
-Switching real → paper:
-  - Always instant, no gates, no confirmation needed
 """
 
 import logging
@@ -22,127 +10,90 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from services.backend.data.database import get_session
-from services.backend.core.paper_trading import (
-    _ensure_wallet_config,
-    get_user_by_wallet,
-)
+from services.backend.core.paper_trading import _ensure_wallet_config, get_user_by_wallet
 from services.backend.api.auth import get_current_user
+from services.backend.api.wallet import _assert_owns_wallet
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(tags=["Trading Mode"], redirect_slashes=False)
 
 
-# ─── MODELS ──────────────────────────────────────────────────────────────────
-
 class ModeToggleRequest(BaseModel):
-    wallet_address: Optional[str] = None
+    wallet_address:   Optional[str] = None
     telegram_user_id: Optional[str] = None
-    mode: str            # 'paper' or 'real'
-    confirmed: bool = False  # Must be True for paper → real
+    mode:             str
+    confirmed:        bool = False
 
-
-# ─── HELPER ──────────────────────────────────────────────────────────────────
 
 def _resolve_config(wallet_address, telegram_user_id, session):
     if not wallet_address and not telegram_user_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide either wallet_address or telegram_user_id.",
-        )
+        raise HTTPException(400, "Provide wallet_address or telegram_user_id.")
     tid = telegram_user_id
     if wallet_address and not telegram_user_id:
         user = get_user_by_wallet(wallet_address.lower(), session)
-        tid = (user.telegram_id or user.wallet_address) if user else wallet_address.lower()
+        tid  = (user.telegram_id or user.wallet_address) if user else wallet_address.lower()
     return _ensure_wallet_config(str(tid), session)
 
 
-# ─── ENDPOINTS ───────────────────────────────────────────────────────────────
-
 @router.get("/wallet/mode")
 def get_mode(
-    wallet_address: Optional[str] = None,
+    wallet_address:   Optional[str] = None,
     telegram_user_id: Optional[str] = None,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    session:          Session = Depends(get_session),
+    current_user:     dict   = Depends(get_current_user),
 ):
-    """
-    GET /wallet/mode
+    # If nothing provided, fall back to the JWT wallet
+    if not wallet_address and not telegram_user_id:
+        wallet_address = current_user.get("wallet")
+    if not wallet_address and not telegram_user_id:
+        raise HTTPException(400, "Provide wallet_address or telegram_user_id.")
 
-    Returns the user's current trading mode and real USDC balance.
-    The frontend uses this to render the toggle pill and warning modal.
-    """
     requested_wallet = (wallet_address or current_user["wallet"]).lower()
     if requested_wallet != current_user["wallet"].lower():
         raise HTTPException(status_code=403, detail="Cannot access mode for another wallet")
 
     config = _resolve_config(requested_wallet, telegram_user_id, session)
     return {
-        "trading_mode":      config.trading_mode,
-        "real_balance_usdc": round(config.real_balance_usdc, 2),
-        "can_switch_to_real": True,   # Always allowed — just requires confirmation
+        "trading_mode":       config.trading_mode,
+        "real_balance_usdc":  round(config.real_balance_usdc, 2),
+        "can_switch_to_real": True,
     }
 
 
 @router.post("/wallet/mode")
 def set_mode(
-    request: ModeToggleRequest,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    request:      ModeToggleRequest,
+    session:      Session = Depends(get_session),
+    current_user: dict   = Depends(get_current_user),
 ):
-    """
-    POST /wallet/mode
+    # Resolve target wallet
+    target_wallet = request.wallet_address or request.telegram_user_id or current_user.get("wallet")
+    if not target_wallet:
+        raise HTTPException(400, "Provide wallet_address or telegram_user_id.")
 
-    Switch trading mode.
+    # Ownership check (safe — _assert_owns_wallet handles None jwt_wallet gracefully)
+    if request.wallet_address:
+        _assert_owns_wallet(request.wallet_address, current_user)
 
-    paper → real:
-      Requires confirmed=True (user clicked through the warning modal).
-      No KYC, no minimum balance.
-
-    real → paper:
-      Always instant. confirmed not required.
-    """
-    requested_wallet = (request.wallet_address or current_user["wallet"]).lower()
-    if requested_wallet != current_user["wallet"].lower():
-        raise HTTPException(status_code=403, detail="Cannot modify modes for other users' wallets")
-
+    requested_wallet = (request.wallet_address or current_user.get("wallet") or "").lower() or None
     config = _resolve_config(requested_wallet, request.telegram_user_id, session)
 
     requested_mode = request.mode.lower().strip()
     if requested_mode not in ("paper", "real"):
-        raise HTTPException(status_code=400, detail="mode must be 'paper' or 'real'.")
+        raise HTTPException(400, "mode must be 'paper' or 'real'.")
 
-    # ── real → paper: always instant ─────────────────────────────────────────
     if requested_mode == "paper":
         config.trading_mode = "paper"
         config.updated_at   = datetime.utcnow()
         session.add(config)
         session.commit()
-        logger.info(f"[mode] {config.telegram_user_id} → PAPER")
-        return {
-            "status":       "ok",
-            "trading_mode": "paper",
-            "message":      "Switched to paper trading. No real money involved.",
-        }
+        return {"status": "ok", "trading_mode": "paper", "message": "Switched to paper trading."}
 
-    # ── paper → real: only requires explicit confirmation ────────────────────
     if not request.confirmed:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "message": "Confirmation required to enable real trading.",
-                "hint":    "Set confirmed=true after the user acknowledges the warning.",
-            },
-        )
+        raise HTTPException(403, {"message": "Confirmation required.", "hint": "Set confirmed=true."})
 
     config.trading_mode = "real"
     config.updated_at   = datetime.utcnow()
     session.add(config)
     session.commit()
-
-    logger.info(f"[mode] {config.telegram_user_id} → REAL")
-    return {
-        "status":       "ok",
-        "trading_mode": "real",
-        "message":      "Real trading enabled. All trades will use real USDC on Base.",
-    }
+    return {"status": "ok", "trading_mode": "real", "message": "Real trading enabled."}
