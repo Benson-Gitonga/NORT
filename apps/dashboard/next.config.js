@@ -14,6 +14,19 @@ const nextConfig = {
     },
   },
 
+  async headers() {
+    return [
+      {
+        // Allow the Base app and Farcaster to read the manifest
+        source: '/.well-known/farcaster.json',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Content-Type', value: 'application/json' },
+        ],
+      },
+    ];
+  },
+
   async rewrites() {
     // DO NOT include a rewrite for source: '/' here — proxy.ts handles it.
     return [
