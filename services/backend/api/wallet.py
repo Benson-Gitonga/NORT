@@ -87,7 +87,12 @@ def _assert_owns_wallet(requested_wallet: str, current_user: dict) -> None:
     In that case we trust the request (the JWT was still verified as valid).
     """
     jwt_wallet = (current_user.get("wallet") or "").strip().lower()
-    target     = requested_wallet.strip().lower()
+    linked_wallets = {
+        str(w).strip().lower()
+        for w in (current_user.get("wallets") or [])
+        if str(w).strip()
+    }
+    target = requested_wallet.strip().lower()
 
     if not jwt_wallet:
         # No wallet in JWT/headers — cannot enforce ownership, allow through
@@ -95,9 +100,13 @@ def _assert_owns_wallet(requested_wallet: str, current_user: dict) -> None:
         logger.debug(f"[auth] No wallet in JWT for ownership check of {target[:10]} — allowing")
         return
 
-    if jwt_wallet != target:
-        logger.warning(f"[auth] Ownership mismatch: jwt={jwt_wallet[:10]} target={target[:10]}")
-        raise HTTPException(status_code=403, detail="Cannot access another user's wallet.")
+    if target == jwt_wallet or target in linked_wallets:
+        return
+
+    logger.warning(
+        f"[auth] Ownership mismatch: jwt={jwt_wallet[:10]} target={target[:10]} linked={len(linked_wallets)}"
+    )
+    raise HTTPException(status_code=403, detail="Cannot access another user's wallet.")
 
 
 # ─── ENDPOINTS ────────────────────────────────────────────────────────────────

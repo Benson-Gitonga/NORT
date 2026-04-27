@@ -48,9 +48,11 @@ def get_mode(
     if not wallet_address and not telegram_user_id:
         raise HTTPException(400, "Provide wallet_address or telegram_user_id.")
 
-    requested_wallet = (wallet_address or current_user["wallet"]).lower()
-    if requested_wallet != current_user["wallet"].lower():
-        raise HTTPException(status_code=403, detail="Cannot access mode for another wallet")
+    requested_wallet = (wallet_address or current_user.get("wallet") or "").lower() or None
+    if requested_wallet:
+        _assert_owns_wallet(requested_wallet, current_user)
+    else:
+        raise HTTPException(400, "Provide wallet_address or telegram_user_id.")
 
     config = _resolve_config(requested_wallet, telegram_user_id, session)
     return {
