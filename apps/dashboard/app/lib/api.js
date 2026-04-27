@@ -247,7 +247,7 @@ export async function getMarket(id) {
 // Falls back to empty array — page.jsx handles the placeholder fallback.
 export async function getMarketPriceHistory(id, interval = '1w') {
   try {
-    const res = await authFetch(`${BASE}/markets/${id}/price-history?interval=${interval}`, { requireAuth: false }); // market-p3: public history fetch
+    const res = await authFetch(`${BASE}/markets/${id}/price-history?interval=${interval}`);
     if (!res.ok) return [];
     const data = await res.json();
     return data.prices || []; // market-p: flat number array e.g. [48.2, 51.0, 55.3, ...]
