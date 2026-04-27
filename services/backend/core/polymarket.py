@@ -403,19 +403,15 @@ def fetch_price_history(market_id: str, interval: str = "1w", fidelity: int = No
     per interval, with a 720-min fallback retry if the primary call returns empty.
     """
     try:
-        # market-p: Step 1 — resolve token_id from condition ID via Gamma API
-        with httpx.Client(timeout=20.0) as client:  # market-p2: raised from 10s
-            gamma_res = client.get(f"{GAMMA_API}/markets", params={"conditionId": market_id})
+        # market-p3: resolve token_id from Gamma ID directly to avoid categorical market collisions
+        with httpx.Client(timeout=20.0) as client:
+            gamma_res = client.get(f"{GAMMA_API}/markets/{market_id}")
             gamma_res.raise_for_status()
-            gamma_data = gamma_res.json()
+            raw = gamma_res.json()
 
-        # market-p: Gamma returns a list; grab the first match
-        markets_list = gamma_data if isinstance(gamma_data, list) else gamma_data.get("markets", [])
-        if not markets_list:
-            print(f"[market-p] No Gamma market found for condition ID: {market_id}")
+        if not raw:
+            print(f"[market-p] No Gamma market found for ID: {market_id}")
             return []
-
-        raw = markets_list[0]
 
         # market-p: clobTokenIds is a JSON string like '["0xabc...", "0xdef..."]'
         # Index 0 = YES token, index 1 = NO token
