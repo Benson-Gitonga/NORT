@@ -7,6 +7,13 @@ import { TradingModeProvider } from "./components/TradingModeContext";
 // P-GLOBAL CHAT: Import floating chat button — renders on every page via layout
 import GlobalChatButton from "./components/GlobalChatButton";
 
+export const metadata = {
+  other: {
+    'base:app_id': '69efacf4f464a4292f34e647',
+  },
+};
+
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
