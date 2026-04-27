@@ -5,6 +5,7 @@ import { useTelegram } from '@/hooks/useTelegram';
 import { useTradingMode } from '@/components/TradingModeContext';
 import Header from '@/components/Header';
 import Navbar from '@/components/Navbar';
+import AuthGate from '@/components/AuthGate';
 import Link from 'next/link';
 import { useTier } from '@/hooks/useTier';
 import PremiumGate from '@/components/PremiumGate';

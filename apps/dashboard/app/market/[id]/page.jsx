@@ -7,7 +7,9 @@ import Navbar from '@/components/Navbar';
 import AuthGate from '@/components/AuthGate';
 import Header from '@/components/Header';
 import TradeModal from '@/components/TradeModal';
-import { useRequireAuth } from '@/hooks/useAuthGuard';
+import ChatSheet from '@/components/ChatSheet';
+import PremiumGate from '@/components/PremiumGate';
+import { useTier } from '@/hooks/useTier';
 
 // ─── SVG LINE CHART COMPONENT ───────────────────────────────────────────────
 function SVGLineChart({ data = [], color = '#00f2ff' }) {
@@ -79,8 +81,10 @@ export default function MarketDetailPage() {
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [tradeSide, setTradeSide] = useState('yes');
 
-  // ✅ Use auth guard for trade actions — shows AuthRequiredModal if not logged in
-  const { guardedNavigate, pendingRoute, pendingMessage, handleLogin, dismiss } = useRequireAuth();
+  const { tier, atLimit, usedToday, refresh: refreshTier, FREE_DAILY_LIMIT } = useTier();
+
+  const [showChat, setShowChat]               = useState(false);
+  const [showPremiumGate, setShowPremiumGate] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -192,7 +196,12 @@ export default function MarketDetailPage() {
                       </div>
                     </div>
 
-                    <button className="m-bot-push">ASK NORT BOT</button>
+                    <button
+                      className="m-bot-push"
+                      onClick={() => atLimit ? setShowPremiumGate(true) : setShowChat(true)}
+                    >
+                      ASK NORT BOT {atLimit && !tier === 'premium' ? '🔒' : ''}
+                    </button>
                   </div>
 
                   {/* Right Column: Trade Panel */}
@@ -269,6 +278,23 @@ export default function MarketDetailPage() {
         </div>
         <Navbar active="markets" />
       </div>
+
+      {/* Chat sheet — opened by ASK NORT BOT */}
+      {showChat && m && (
+        <ChatSheet
+          signal={{ id: m.id, q: m.q, locked: false }}
+          onClose={() => { setShowChat(false); refreshTier(); }}
+        />
+      )}
+
+      {/* Premium gate — shown when at limit */}
+      <PremiumGate
+        open={showPremiumGate}
+        onClose={() => { setShowPremiumGate(false); refreshTier(); }}
+        reason="limit"
+        used={usedToday}
+        limit={FREE_DAILY_LIMIT}
+      />
 
       {/* Trade modal — only shown when authenticated */}
       {showTradeModal && m && (

@@ -218,14 +218,14 @@ export default function PremiumGate({ open, onClose, reason = 'limit', used = 10
   const busy      = isSending || isWaiting || isVerifying;
 
   const walletBtnLabel = () => {
-    if (isDone)       return '⚡ UNLOCKED ✓';
+    if (isDone)       return 'UNLOCKED ✓';
     if (isSending)    return 'Waiting for wallet confirmation...';
     if (isWaiting)    return 'Waiting for on-chain confirmation...';
     if (isVerifying)  return 'Verifying payment...';
-    if (payStep === 'error') return '⚡ Try Again';
+    if (payStep === 'error') return 'Try Again';
     if (!payInfo)     return 'Loading payment details...';
     if (!canPayWithWallet) return 'Connect a wallet to pay';
-    return `⚡ Pay $${payInfo?.amount?.toFixed(2) ?? '1.00'} USDC — Unlock Premium`;
+    return `Pay $${payInfo?.amount?.toFixed(2) ?? '1.00'} USDC — Unlock Premium`;
   };
 
   return (
@@ -270,7 +270,7 @@ export default function PremiumGate({ open, onClose, reason = 'limit', used = 10
         }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid var(--border)' }}>
             <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: 'var(--muted)', fontFamily: 'DM Mono, monospace', letterSpacing: '0.06em', textTransform: 'uppercase' }}>FREE</div>
-            <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: '#F59E0B', fontFamily: 'DM Mono, monospace', letterSpacing: '0.06em', textTransform: 'uppercase', borderLeft: '1px solid var(--border)' }}>⚡ PREMIUM</div>
+            <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: '#F59E0B', fontFamily: 'DM Mono, monospace', letterSpacing: '0.06em', textTransform: 'uppercase', borderLeft: '1px solid var(--border)' }}>PREMIUM</div>
           </div>
           {FEATURES.map((row, i) => (
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: i < FEATURES.length - 1 ? '1px solid var(--border)' : 'none' }}>
@@ -293,7 +293,6 @@ export default function PremiumGate({ open, onClose, reason = 'limit', used = 10
             background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
             fontSize: 12, color: '#F59E0B', fontFamily: 'DM Mono, monospace',
           }}>
-            <span>💳</span>
             <span>One-time unlock · <strong>${payInfo.amount.toFixed(2)} USDC</strong> on <strong>Base</strong></span>
           </div>
         )}

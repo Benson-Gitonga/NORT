@@ -3,7 +3,9 @@ import { useState, useRef, useEffect } from 'react';
 import { getAdvice, getPremiumAdvice, verifyPayment } from '@/lib/api';
 import { useTelegram } from '@/hooks/useTelegram';
 import { useAuth } from '@/hooks/useAuth';
+import { useTier } from '@/hooks/useTier';
 import LoginPrompt from './LoginPrompt';
+import PremiumGate from './PremiumGate';
 
 const INIT_MSG = {
   id: 'init',
@@ -14,13 +16,15 @@ const INIT_MSG = {
 export default function ChatSheet({ signal, onClose }) {
   const { haptic } = useTelegram();
   const { isAuthed, walletAddress, login } = useAuth();
+  const { tier, atLimit, usedToday, remaining, refresh: refreshTier, FREE_DAILY_LIMIT } = useTier();
+
   const [messages, setMessages]     = useState([INIT_MSG]);
   const [input, setInput]           = useState('');
   const [thinking, setThinking]     = useState(false);
-  const [gated, setGated]           = useState(signal?.locked || false);
-  const [payInput, setPayInput]     = useState('');
-  const [payLoading, setPayLoading] = useState(false);
+  const [showPremiumGate, setShowPremiumGate] = useState(false);
   const bottomRef = useRef(null);
+
+  const isPremium = tier === 'premium';
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -34,112 +38,124 @@ export default function ChatSheet({ signal, onClose }) {
     setMessages(prev => [...prev, { id: Date.now(), role, text }]);
   };
 
-  const formatAdvice = (resp) =>
-    `${resp.summary}\n\n${resp.why}\n\nRisks: ${resp.risks.join(', ')}\n\nPlan: ${resp.plan}`;
+  const formatAdvice = (resp) => {
+    if (isPremium) {
+      const risks = (resp.risks || []).map(r => `• ${r}`).join('\n');
+      return `${resp.summary}\n\nWHY IT'S TRENDING\n${resp.why}\n\nRISKS\n${risks}\n\nVERDICT: ${resp.plan}\nConfidence: ${Math.round((resp.confidence || 0) * 100)}%\n\n${resp.disclaimer}`;
+    }
+    return `${resp.summary}\n\nVERDICT: ${resp.plan}\nConfidence: ${Math.round((resp.confidence || 0) * 100)}%\n\n${resp.disclaimer}`;
+  };
 
   const send = async () => {
     const q = input.trim();
     if (!q || thinking) return;
+
+    // Check limit before calling — show PremiumGate immediately
+    if (atLimit) {
+      setShowPremiumGate(true);
+      return;
+    }
+
     haptic.light();
     setInput('');
     addMsg('user', q);
     setThinking(true);
     try {
-      const resp = signal?.locked ? await getPremiumAdvice(signal?.id) : await getAdvice(signal?.id, q);
+      const resp = isPremium
+        ? await getPremiumAdvice(signal?.id, q)
+        : await getAdvice(signal?.id, q);
       addMsg('ai', formatAdvice(resp));
-    } catch {
-      addMsg('ai', 'Something went wrong. Try again.');
+      refreshTier(); // update usage counter
+    } catch (err) {
+      const msg = err?.message || '';
+      if (msg.includes('402') || msg === 'PAYMENT_REQUIRED') {
+        setShowPremiumGate(true);
+      } else if (msg.includes('429')) {
+        setShowPremiumGate(true);
+      } else {
+        addMsg('ai', 'Something went wrong. Try again.');
+      }
     } finally {
       setThinking(false);
     }
   };
 
-  const handlePay = async () => {
-    const proof = payInput.trim();
-    if (!proof) return;
-    haptic.medium();
-    setPayLoading(true);
-    try {
-      const result = await verifyPayment(proof, signal?.id);
-      if (result.valid) {
-        haptic.success();
-        setGated(false);
-        const premium = await getPremiumAdvice(signal?.id);
-        addMsg('ai', 'Payment confirmed. Premium advice unlocked.');
-        addMsg('ai', formatAdvice(premium));
-      } else {
-        haptic.error();
-        addMsg('ai', `Payment invalid: ${result.error}`);
-      }
-    } catch {
-      addMsg('ai', 'Verification failed. Try again.');
-    } finally {
-      setPayLoading(false);
-      setPayInput('');
-    }
-  };
-
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="chat-sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="chat-header">
-          <div className="chat-title">
-            NORTBOT
-            <span className="chat-badge">{gated ? 'PREMIUM' : 'FREE'}</span>
-          </div>
-          <button className="chat-close" onClick={onClose}>✕</button>
-        </div>
-
-        <div className="chat-messages">
-          {messages.map(m => (
-            <div key={m.id} className={`msg ${m.role}`} style={{ whiteSpace: 'pre-line' }}>
-              {m.text}
+    <>
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="chat-sheet" onClick={(e) => e.stopPropagation()}>
+          <div className="chat-header">
+            <div className="chat-title">
+              NORTBOT
+              <span className="chat-badge" style={{ color: isPremium ? '#F59E0B' : undefined }}>
+                {isPremium ? '⚡ PREMIUM' : 'FREE'}
+              </span>
             </div>
-          ))}
+            {!isPremium && !atLimit && (
+              <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'DM Mono, monospace', marginLeft: 'auto', marginRight: 10 }}>
+                {remaining}/{FREE_DAILY_LIMIT} left
+              </span>
+            )}
+            <button className="chat-close" onClick={onClose}>✕</button>
+          </div>
 
-          {gated && (
-            <div className="premium-gate">
-              <div className="gate-label">PREMIUM · 0.10 USDC</div>
-              <div style={{ fontSize: 12, color: 'var(--g4)', lineHeight: 1.4 }}>
-                Paste your x402 payment proof to unlock full analysis.
+          <div className="chat-messages">
+            {messages.map(m => (
+              <div key={m.id} className={`msg ${m.role}`} style={{ whiteSpace: 'pre-line' }}>
+                {m.text}
               </div>
+            ))}
+
+            {thinking && (
+              <div className="msg-thinking">
+                <span className="td" /><span className="td" /><span className="td" />
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Limit banner */}
+          {atLimit && !isPremium && (
+            <div
+              onClick={() => setShowPremiumGate(true)}
+              style={{
+                padding: '10px 16px', background: 'rgba(245,158,11,0.1)',
+                borderTop: '1px solid rgba(245,158,11,0.2)',
+                fontSize: 12, color: '#F59E0B', cursor: 'pointer',
+                fontFamily: 'DM Mono, monospace', textAlign: 'center',
+              }}
+            >
+              Limit reached · Tap to upgrade →
+            </div>
+          )}
+
+          {!atLimit && (
+            <div className="chat-input-row">
               <input
                 className="chat-input"
-                style={{ borderRadius: 'var(--rsm)', width: '100%' }}
-                placeholder="Paste payment proof..."
-                value={payInput}
-                onChange={(e) => setPayInput(e.target.value)}
+                placeholder={isPremium ? 'Ask anything — deep analysis mode...' : 'Ask about this market...'}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && send()}
+                disabled={thinking}
               />
-              <button className="gate-btn" onClick={handlePay} disabled={payLoading}>
-                {payLoading ? 'Verifying...' : 'Unlock Premium →'}
-              </button>
+              <button
+                className="chat-send"
+                onClick={send}
+                disabled={!input.trim() || thinking}
+              >↑</button>
             </div>
           )}
-
-          {thinking && (
-            <div className="msg-thinking">
-              <span className="td" /><span className="td" /><span className="td" />
-            </div>
-          )}
-          <div ref={bottomRef} />
         </div>
-
-        {!gated && (
-          <div className="chat-input-row">
-            <input
-              className="chat-input"
-              placeholder="Ask about this market..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && send()}
-              disabled={thinking}
-            />
-            <button className="chat-send" onClick={send} disabled={!input.trim() || thinking}>
-              ↑
-            </button>
-          </div>
-        )}
       </div>
-    </div>
+
+      <PremiumGate
+        open={showPremiumGate}
+        onClose={() => { setShowPremiumGate(false); refreshTier(); }}
+        reason={atLimit ? 'limit' : 'feature'}
+        used={usedToday}
+        limit={FREE_DAILY_LIMIT}
+      />
+    </>
   );
 }

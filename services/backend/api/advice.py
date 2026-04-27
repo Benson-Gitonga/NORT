@@ -227,9 +227,9 @@ async def get_advice_usage(
         logs = [l for l in all_logs if (l.telegram_user_id or "").lower() == effective_wallet.lower()]
 
     used = len(logs)
-    is_premium = any(l.premium for l in logs)
-    if not is_premium:
-        is_premium = has_any_confirmed_payment(effective_wallet)
+    # Always check the Payment table — never infer tier from AuditLog.premium,
+    # which only records what tier a past call was made under, not current status.
+    is_premium = has_any_confirmed_payment(effective_wallet)
 
     at_limit = (not is_premium) and (used >= FREE_DAILY_LIMIT)
 
