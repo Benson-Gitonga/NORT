@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import HTTPException, Security, status
+from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 PRIVY_APP_ID = os.getenv("PRIVY_APP_ID", "").strip()
@@ -65,6 +65,7 @@ async def _verify_with_privy(token: str) -> Dict[str, Any]:
 
 
 async def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
 ) -> Dict[str, Any]:
     if credentials is None:
@@ -97,10 +98,14 @@ async def get_current_user(
     data = await _verify_with_privy(token)
     wallet = _extract_wallet_address(data)
     if not wallet:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Privy user has no wallet address.",
-        )
+        header_wallet = (request.headers.get("x-wallet-address") or "").strip().lower()
+        if header_wallet and header_wallet not in {"null", "undefined"}:
+            wallet = header_wallet
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Privy user has no wallet address.",
+            )
 
     data["wallet"] = wallet.lower()
     _token_cache[token] = {

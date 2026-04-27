@@ -109,7 +109,7 @@ const resolveAccessToken = async () => {
 
   for (let i = 0; i < TOKEN_POLL_ATTEMPTS; i += 1) {
     try {
-      const token = await getAccessToken();
+      const token = await getToken();
       if (isValidToken(token)) {
         accessTokenCache = token;
         accessTokenCachedAt = Date.now();
@@ -131,6 +131,11 @@ export async function authFetch(endpoint, options = {}) {
     ...requestOptions
   } = options;
   const headers = new Headers(requestOptions.headers || {});
+  const walletAddress = getStoredWallet();
+
+  if (walletAddress) {
+    headers.set('X-Wallet-Address', walletAddress.toLowerCase());
+  }
 
   if (typeof window === 'undefined') {
     return fetch(endpoint, { ...requestOptions, headers });
@@ -153,7 +158,7 @@ export async function authFetch(endpoint, options = {}) {
     window.__NORT_LAST_ACCESS_TOKEN = token;
   } else {
     try {
-      const optionalToken = await getAccessToken();
+      const optionalToken = await getToken();
       if (isValidToken(optionalToken)) headers.set('Authorization', `Bearer ${optionalToken}`);
     } catch {}
   }

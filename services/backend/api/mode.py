@@ -75,8 +75,7 @@ def set_mode(
     if request.wallet_address:
         _assert_owns_wallet(request.wallet_address, current_user)
 
-    config = _resolve_config(request.wallet_address, request.telegram_user_id, session)
-
+    requested_wallet = (request.wallet_address or current_user.get("wallet") or "").lower() or None
     config = _resolve_config(requested_wallet, request.telegram_user_id, session)
 
     requested_mode = request.mode.lower().strip()
