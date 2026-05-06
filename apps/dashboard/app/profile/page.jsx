@@ -9,7 +9,7 @@ import AuthGate from '@/components/AuthGate';
 import Link from 'next/link';
 import { useTier } from '@/hooks/useTier';
 import PremiumGate from '@/components/PremiumGate';
-import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, getPermissions, setPermissions, BASE } from '@/lib/api';
+import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE, getPermissions, setPermissions } from '@/lib/api';
 
 export default function ProfilePage() {
   const { user, walletAddress, logout } = useAuth();
@@ -314,80 +314,22 @@ export default function ProfilePage() {
             </div>
           )}
 
-          {/* ── Auto-Trade Permissions ── */}
-          <div className="sec-lbl fu d7"><span className="sec-t">Auto-Trade Settings</span>
-            {permsSaving && <span className="sec-t" style={{ color: 'var(--teal)', fontSize: 10 }}>Saving...</span>}
-          </div>
+          {/* ── Auto-Trade — Coming Soon ── */}
+          <div className="sec-lbl fu d7"><span className="sec-t">Auto-Trade</span></div>
           <div className="settings-group fu d8">
-            {permsLoading ? (
-              <div className="settings-item"><div className="settings-label">Loading...</div></div>
-            ) : perms ? (<>
-              {/* Master toggle */}
-              <div className="settings-item">
-                <div className="settings-label">
-                  Auto-Trade
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                    Fire trades automatically when confidence is high enough
-                  </div>
-                </div>
-                <label className="toggle-switch">
-                  <input type="checkbox" checked={!!perms.auto_trade_enabled}
-                    onChange={e => savePerms({ auto_trade_enabled: e.target.checked })} />
-                  <span className="toggle-slider" />
-                </label>
+            <div className="settings-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '14px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--white)' }}>Automated Trading</span>
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                  background: 'rgba(100,116,139,0.2)', border: '1px solid rgba(100,116,139,0.3)',
+                  color: 'var(--muted)', fontFamily: 'DM Mono, monospace', letterSpacing: '0.06em',
+                }}>COMING SOON</span>
               </div>
-              {/* Trade mode */}
-              <div className="settings-item">
-                <div className="settings-label">
-                  Mode
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                    paper = safe sim · confirm = ask me first · real = live
-                  </div>
-                </div>
-                <select className="settings-select"
-                  value={perms.trade_mode || 'paper'}
-                  onChange={e => savePerms({ trade_mode: e.target.value })}>
-                  <option value="paper">Paper</option>
-                  <option value="confirm">Confirm</option>
-                  <option value="real">Real</option>
-                </select>
+              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+                Let NORT automatically execute trades based on AI confidence scores. Available in v3.
               </div>
-              {/* Max bet */}
-              <div className="settings-item">
-                <div className="settings-label">
-                  Max Bet Size
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                    Hard cap per trade in USDC — AI cannot exceed this
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>$</span>
-                  <input type="number" min="1" max="500" step="1"
-                    className="settings-input-sm"
-                    value={perms.max_bet_size ?? 10}
-                    onBlur={e => savePerms({ max_bet_size: parseFloat(e.target.value) || 10 })}
-                    onChange={e => setPerms(p => ({ ...p, max_bet_size: e.target.value }))} />
-                </div>
-              </div>
-              {/* Min confidence */}
-              <div className="settings-item">
-                <div className="settings-label">
-                  Min Confidence
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                    Agent must score above this to fire a trade (0.75 = 75%)
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input type="number" min="0.5" max="1.0" step="0.05"
-                    className="settings-input-sm"
-                    value={perms.min_confidence ?? 0.75}
-                    onBlur={e => savePerms({ min_confidence: parseFloat(e.target.value) || 0.75 })}
-                    onChange={e => setPerms(p => ({ ...p, min_confidence: e.target.value }))} />
-                </div>
-              </div>
-            </>) : (
-              <div className="settings-item"><div className="settings-label">Connect wallet to manage auto-trade settings</div></div>
-            )}
+            </div>
           </div>
 
           {/* ── Wallet ── */}

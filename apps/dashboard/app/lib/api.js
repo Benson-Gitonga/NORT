@@ -129,16 +129,18 @@ export async function refreshMarkets() {
 
 // ─── ADVICE ──────────────────────────────────────────────────────────────────
 
-export async function getAdvice(marketId, userMessage = null, language = 'en') {
+export async function getAdvice(marketId, userMessage = null, language = null) {
   const wallet = getStoredWallet();
+  // Detect Swahili from browser locale if caller doesn't specify a language
+  const lang = language || ((typeof navigator !== 'undefined' && navigator.language || 'en').startsWith('sw') ? 'sw' : 'en');
   const res = await authFetch(`${BASE}/agent/advice`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       market_id: String(marketId),
-      telegram_id: wallet || null,
+      user_id: wallet || null,
       premium: false,
-      language,
+      language: lang,
       user_message: userMessage,
     }),
   });
@@ -155,16 +157,17 @@ export async function getAdvice(marketId, userMessage = null, language = 'en') {
   };
 }
 
-export async function getPremiumAdvice(marketId, userMessage = null, language = 'en') {
+export async function getPremiumAdvice(marketId, userMessage = null, language = null) {
   const wallet = getStoredWallet();
+  const lang = language || ((typeof navigator !== 'undefined' && navigator.language || 'en').startsWith('sw') ? 'sw' : 'en');
   const res = await authFetch(`${BASE}/agent/advice`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       market_id: String(marketId),
-      telegram_id: wallet || null,
+      user_id: wallet || null,
       premium: true,
-      language,
+      language: lang,
       user_message: userMessage,
     }),
   });
@@ -520,7 +523,9 @@ export async function createOnramp({ amount, phoneNumber, walletAddress, mobileN
       chain,
       asset,
       fee,
-      telegram_user_id: telegramUserId,
+      // Dashboard users don't have a Telegram ID — use walletAddress as the
+      // identity key so _grant_premium_for_onramp can find the canonical user row.
+      telegram_user_id: telegramUserId || walletAddress,
     }),
   });
   if (!res.ok) {

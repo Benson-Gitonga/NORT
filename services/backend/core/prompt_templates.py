@@ -49,19 +49,3 @@ OUTPUT JSON ONLY — no explanation, no markdown, no preamble:
   "stale_data_warning": "<optional: note if data seems outdated or incomplete, else null>"
 }
 """
-
-def build_advice_user_prompt(market_id: str, telegram_id: str = None, premium: bool = False) -> str:
-    base = f"Analyze prediction market {market_id} using the data provided below.\n"
-    if telegram_id:
-        base += f"User telegram_id: {telegram_id}\n"
-    if premium:
-        base += "\nPREMIUM MODE: Provide deeper risk analysis and position sizing guidance.\n"
-    else:
-        base += (
-            "\nFREE MODE: Keep advice vague and conceptual. "
-            "Do NOT reveal specific entry/exit price targets, exact probability thresholds, "
-            "or precise position sizes. "
-            "End the summary with a compelling hook inviting the user to upgrade to Premium "
-            "for exact targets and full analysis.\n"
-        )
-    return base

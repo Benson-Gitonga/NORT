@@ -18,6 +18,11 @@ X402_CHAIN = os.getenv("X402_CHAIN", "Base")
 X402_TREASURY_ADDRESS = os.getenv("NORT_TREASURY_ADDRESS", "").strip().lower()
 GLOBAL_PAYMENT_SCOPE = "__global__"
 
+# ── Demo mode ──────────────────────────────────────────────────────────────────
+# Defaults to True so it works on Render / hackathon without any extra config.
+# Set DEMO_ENABLED=false in the env to disable the bypass in a real-production deploy.
+DEMO_ENABLED = os.getenv("DEMO_ENABLED", "true").lower() != "false"
+
 # ── Base chain constants ────────────────────────────────────────────────────
 BASE_RPC_URL = "https://mainnet.base.org"
 BASE_USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"  # USDC on Base
@@ -98,12 +103,12 @@ async def verify_onchain_usdc_transfer(
     }
 
 
-def has_premium_access(telegram_id: str | None, market_id: str) -> bool:
-    if not telegram_id:
+def has_premium_access(user_id: str | None, market_id: str) -> bool:
+    if not user_id:
         return False
 
     with Session(engine) as session:
-        user = resolve_user_identity(str(telegram_id), session)
+        user = resolve_user_identity(str(user_id), session)
         if not user:
             return False
 
@@ -125,12 +130,12 @@ def has_premium_access(telegram_id: str | None, market_id: str) -> bool:
         return global_payment is not None
 
 
-def has_any_confirmed_payment(telegram_id: str | None) -> bool:
-    if not telegram_id:
+def has_any_confirmed_payment(user_id: str | None) -> bool:
+    if not user_id:
         return False
 
     with Session(engine) as session:
-        user = resolve_user_identity(str(telegram_id), session)
+        user = resolve_user_identity(str(user_id), session)
         if not user:
             return False
 
@@ -154,8 +159,11 @@ async def verify_x402_payment(proof: str, telegram_id: str, market_id: str | Non
 
     # ── DEMO BYPASS ────────────────────────────────────────────────────────────
     # Typing "demo" instantly grants Premium for demonstration purposes.
-    # This lets you showcase the Free → Premium flow without a real payment.
+    # Controlled by DEMO_ENABLED env var (default True). Set DEMO_ENABLED=false
+    # to disable this bypass in a real-production environment.
     if normalized_proof.lower() == "demo":
+        if not DEMO_ENABLED:
+            return {"verified": False, "reason": "Demo mode is disabled in this environment."}
         # Demo payments are stored against GLOBAL_PAYMENT_SCOPE so one demo
         # unlock covers every market — consistent with has_any_confirmed_payment.
         demo_scope = GLOBAL_PAYMENT_SCOPE

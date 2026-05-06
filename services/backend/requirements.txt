@@ -1,5 +1,6 @@
 fastapi          # The backend framework
 uvicorn          # The server to run FastAPI
+pydantic         # Request/response models used directly by API routes
 sqlmodel         # Combines SQLAlchemy and Pydantic for the database
 python-dotenv    # To manage your .env file
 httpx            # To fetch data from the Polymarket API

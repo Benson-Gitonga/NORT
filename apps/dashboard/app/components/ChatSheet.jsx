@@ -16,12 +16,13 @@ const INIT_MSG = {
 export default function ChatSheet({ signal, onClose }) {
   const { haptic } = useTelegram();
   const { isAuthed, walletAddress, login } = useAuth();
-  const { tier, atLimit, usedToday, remaining, refresh: refreshTier, FREE_DAILY_LIMIT } = useTier();
+  const { tier, atLimit, usedToday, remaining, windowResetAt, refresh: refreshTier, FREE_DAILY_LIMIT } = useTier();
 
   const [messages, setMessages]     = useState([INIT_MSG]);
   const [input, setInput]           = useState('');
   const [thinking, setThinking]     = useState(false);
   const [showPremiumGate, setShowPremiumGate] = useState(false);
+  const [lang, setLang]             = useState('en');  // visible toggle: 'en' | 'sw'
   const bottomRef = useRef(null);
 
   const isPremium = tier === 'premium';
@@ -50,9 +51,15 @@ export default function ChatSheet({ signal, onClose }) {
     const q = input.trim();
     if (!q || thinking) return;
 
-    // Check limit before calling — show PremiumGate immediately
+    // Check limit before calling — show inline message in chat
     if (atLimit) {
-      setShowPremiumGate(true);
+      addMsg('user', q);
+      setInput('');
+      addMsg('ai',
+        windowResetAt
+          ? `You've used all ${FREE_DAILY_LIMIT} free calls this window. Your limit refreshes at ${windowResetAt}.\n\nUpgrade to Premium for unlimited access.`
+          : `You've used all ${FREE_DAILY_LIMIT} free calls this window. Come back later or upgrade to Premium for unlimited access.`
+      );
       return;
     }
 
@@ -62,8 +69,8 @@ export default function ChatSheet({ signal, onClose }) {
     setThinking(true);
     try {
       const resp = isPremium
-        ? await getPremiumAdvice(signal?.id, q)
-        : await getAdvice(signal?.id, q);
+        ? await getPremiumAdvice(signal?.id, q, lang)
+        : await getAdvice(signal?.id, q, lang);
       addMsg('ai', formatAdvice(resp));
       refreshTier(); // update usage counter
     } catch (err) {
@@ -71,7 +78,15 @@ export default function ChatSheet({ signal, onClose }) {
       if (msg.includes('402') || msg === 'PAYMENT_REQUIRED') {
         setShowPremiumGate(true);
       } else if (msg.includes('429')) {
-        setShowPremiumGate(true);
+        // Rate limit hit — show inline message in chat, not the paywall
+        const resetMatch = msg.match(/refresh at (.+?)\./);
+        const resetTime = resetMatch ? resetMatch[1] : null;
+        addMsg('ai',
+          resetTime
+            ? `You've used all ${FREE_DAILY_LIMIT} free calls this window. Your limit refreshes at ${resetTime}.\n\nUpgrade to Premium for unlimited access.`
+            : `You've used all ${FREE_DAILY_LIMIT} free calls this window. Come back later or upgrade to Premium for unlimited access.`
+        );
+        refreshTier();
       } else {
         addMsg('ai', 'Something went wrong. Try again.');
       }
@@ -96,6 +111,20 @@ export default function ChatSheet({ signal, onClose }) {
                 {remaining}/{FREE_DAILY_LIMIT} left
               </span>
             )}
+            {/* Language toggle — visible to all users */}
+            <button
+              onClick={() => setLang(l => l === 'en' ? 'sw' : 'en')}
+              title={lang === 'sw' ? 'Switch to English' : 'Badilisha kwa Kiswahili'}
+              style={{
+                fontSize: 10, padding: '2px 6px', marginRight: 6,
+                background: lang === 'sw' ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)',
+                border: lang === 'sw' ? '1px solid rgba(16,185,129,0.4)' : '1px solid var(--border)',
+                borderRadius: 4, color: lang === 'sw' ? '#10B981' : 'var(--muted)',
+                cursor: 'pointer', fontFamily: 'DM Mono, monospace', lineHeight: 1.6,
+              }}
+            >
+              {lang === 'sw' ? '🇰🇪 SW' : '🇬🇧 EN'}
+            </button>
             <button className="chat-close" onClick={onClose}>✕</button>
           </div>
 

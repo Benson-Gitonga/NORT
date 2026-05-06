@@ -19,6 +19,7 @@ Usage (from advice.py):
 import asyncio
 import httpx
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,8 +28,10 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-OPENROUTER_URL             = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
-OPENROUTER_API_KEY         = os.getenv("OPENROUTER_API_KEY", "").strip()
+logger = logging.getLogger(__name__)
+
+OPENROUTER_URL              = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+OPENROUTER_API_KEY          = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_KEY_FALLBACK = os.getenv("OPENROUTER_API_KEY_FALLBACK", "").strip()
 
 def _make_headers(api_key: str) -> dict:
@@ -39,10 +42,8 @@ def _make_headers(api_key: str) -> dict:
         "X-Title":       "Nort Advisor",
     }
 
-OPENROUTER_HEADERS = _make_headers(OPENROUTER_API_KEY)
-
 # ─────────────────────────────────────────────────────────────
-# TASK 6: PERFORMANCE SUMMARY HELPER
+# PERFORMANCE SUMMARY HELPER
 # Reads the last 10 AuditLog entries for this user where
 # outcome_correct is not None, and builds a calibration note
 # injected into the SynthesisAgent prompt.
@@ -66,7 +67,7 @@ def _build_performance_summary(telegram_id: Optional[str]) -> Optional[str]:
                 select(AuditLog)
                 .where(AuditLog.telegram_user_id == telegram_id)
                 .where(AuditLog.action == "advice")
-                .where(AuditLog.outcome_correct != None)  # noqa: E711
+                .where(AuditLog.outcome_correct.isnot(None))
                 .order_by(AuditLog.created_at.desc())
                 .limit(10)
             ).all()
@@ -74,7 +75,7 @@ def _build_performance_summary(telegram_id: Optional[str]) -> Optional[str]:
         if not logs:
             return None
 
-        correct = sum(1 for l in logs if l.outcome_correct is True)
+        correct = sum(1 for entry in logs if entry.outcome_correct is True)
         total   = len(logs)
         pct     = round((correct / total) * 100)
 
@@ -91,7 +92,7 @@ def _build_performance_summary(telegram_id: Optional[str]) -> Optional[str]:
             f"if your recent track record does not support it."
         )
     except Exception as e:
-        print(f"[PerformanceSummary] Failed (non-fatal): {e}")
+        logger.warning("[PerformanceSummary] Failed (non-fatal): %s", e)
         return None
 
 # ─────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ async def run_technical(market_data: dict, market_signal: dict) -> dict:
         }
 
     except Exception as e:
-        print(f"[TechnicalAgent ERROR] {e}")
+        logger.error("[TechnicalAgent] Failed: %s", e)
         return {"ok": False, "error": str(e)}
 
 
@@ -189,7 +190,7 @@ Examples of correct output:
 """
 
     payload = {
-        "model": "meta-llama/llama-3.3-70b-instruct",  # Task 1: upgraded from 3B → 70B for accurate financial sentiment
+        "model": "meta-llama/llama-3.3-70b-instruct",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 80,
     }
@@ -200,9 +201,9 @@ Examples of correct output:
 
     try:
         resp = await _call(OPENROUTER_API_KEY)
-        # Task 9: fallback key if primary hits 429
+        # Fallback key on 429
         if resp.status_code == 429 and OPENROUTER_API_KEY_FALLBACK:
-            print("[SentimentAgent] Primary key rate-limited, retrying with fallback key")
+            logger.warning("[SentimentAgent] Primary key rate-limited, retrying with fallback key")
             resp = await _call(OPENROUTER_API_KEY_FALLBACK)
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"].strip()
@@ -223,7 +224,7 @@ Examples of correct output:
         return {"score": score, "label": label, "reason": reason, "ok": True}
 
     except Exception as e:
-        print(f"[SentimentAgent ERROR] {e}")
+        logger.error("[SentimentAgent] Failed: %s", e)
         return {"score": 5, "label": "Neutral", "reason": "Sentiment analysis unavailable.", "ok": False, "error": str(e)}
 
 
@@ -263,7 +264,7 @@ async def run_risk(telegram_id: Optional[str], paper_balance: float = 1000.0,
         }
 
     except Exception as e:
-        print(f"[RiskAgent ERROR] {e}")
+        logger.error("[RiskAgent] Failed: %s", e)
         return {"safe_bet_usdc": 5.0, "risk_level": "UNKNOWN", "ok": False, "error": str(e)}
 
 
@@ -312,7 +313,10 @@ async def run_synthesis(
             "End with a clear call-to-action encouraging the user to unlock PREMIUM for exact numbers, deep-dive analysis, and precise sizing."
         )
 
-    lang_instruction = "Respond entirely in English. Do NOT translate JSON keys."
+    if language == "sw":
+        lang_instruction = "Jibu kwa Kiswahili. Usitafsiri funguo za JSON — andika thamani za maandishi kwa Kiswahili tu."
+    else:
+        lang_instruction = "Respond entirely in English. Do NOT translate JSON keys."
 
     # Task 6: inject performance summary so the agent can self-calibrate
     performance_note = _build_performance_summary(telegram_id)
@@ -383,17 +387,17 @@ Return ONLY valid JSON. The market_id field must be exactly: {market_id}
 
     try:
         resp = await _synthesis_call(OPENROUTER_API_KEY)
-        # Task 9: fallback key on 429
+        # Fallback key on 429
         if resp.status_code == 429 and OPENROUTER_API_KEY_FALLBACK:
-            print(f"[Synthesis] Primary key rate-limited, retrying with fallback key")
+            logger.warning("[Synthesis] Primary key rate-limited, retrying with fallback key")
             resp = await _synthesis_call(OPENROUTER_API_KEY_FALLBACK)
         if resp.status_code != 200:
-            print(f"[Synthesis] OpenRouter Error ({model}): {resp.status_code} - {resp.text}")
+            logger.error("[Synthesis] OpenRouter error (%s): %d - %s", model, resp.status_code, resp.text[:200])
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"[Synthesis] Orchestrator Exception ({model}): {type(e).__name__} - {e}")
-        raise e
+        logger.error("[Synthesis] Exception (%s): %s - %s", model, type(e).__name__, e)
+        raise
 
 
 # ─────────────────────────────────────────────────────────────
@@ -411,12 +415,12 @@ async def run_orchestrator(
     paper_balance:  float         = 1000.0,
     max_bet_size:   float         = 10.0,
     language:       str           = "en",
-) -> str:
+) -> tuple:
     """
     The main entry point. Runs all 3 sub-agents in parallel, then
     feeds their structured reports to the SynthesisAgent.
 
-    Returns a tuple: (raw_llm_response: str, technical: dict, sentiment: dict)
+    Returns: (raw_llm_response: str, technical: dict, sentiment: dict)
     """
     if history is None:
         history = []
@@ -427,18 +431,16 @@ async def run_orchestrator(
         f"prediction market {market_id}"
     ).strip()
 
-    print(f"[Orchestrator] Running parallel sub-agents for market: {market_id}")
+    logger.debug("[Orchestrator] Running parallel sub-agents for market: %s", market_id)
 
-    # ── Run all 3 sub-agents in parallel ─────────────────────
     technical, sentiment, risk = await asyncio.gather(
         run_technical(market_data, market_signal),
         run_sentiment(search_context),
         run_risk(telegram_id, paper_balance, max_bet_size),
     )
 
-    print(f"[Orchestrator] Technical: {technical}")
-    print(f"[Orchestrator] Sentiment: {sentiment}")
-    print(f"[Orchestrator] Risk:      {risk}")
+    logger.debug("[Orchestrator] Technical momentum=%s sentiment=%s/%s risk=%s",
+                 technical.get("momentum"), sentiment.get("score"), sentiment.get("label"), risk.get("risk_level"))
 
     # ── Feed all 3 reports to SynthesisAgent ─────────────────
     raw = await run_synthesis(
@@ -454,5 +456,5 @@ async def run_orchestrator(
         telegram_id=telegram_id,
     )
 
-    print(f"[Orchestrator] SynthesisAgent complete.")
+    logger.debug("[Orchestrator] SynthesisAgent complete for market: %s", market_id)
     return raw, technical, sentiment

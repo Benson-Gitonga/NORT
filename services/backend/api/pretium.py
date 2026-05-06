@@ -186,8 +186,8 @@ async def offramp_endpoint(
         except Exception as e:
             if isinstance(e, HTTPException):
                 raise
-            # If RPC fails temporarily, we might still want to proceed and let Pretium fail it, or reject
-            pass
+            # RPC temporarily unavailable — log and proceed; Pretium will validate on their end
+            logger.warning("offramp.chain_verify.rpc_failed tx=%s err=%s", req.transaction_hash, e)
 
     try:
         result = await create_offramp(
@@ -222,7 +222,7 @@ async def transaction_status_endpoint(
         tx = await check_transaction_status(transaction_id, session)
         if not tx:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        if tx.telegram_user_id.lower() != (current_user.get("wallet") or "").lower():
+        if (tx.get("telegram_user_id") or "").lower() != (current_user.get("wallet") or "").lower():
             raise HTTPException(status_code=403, detail="Not your transaction")
         return tx
     except ValueError as e:
@@ -281,10 +281,6 @@ async def webhook_endpoint(request: Request, session: Session = Depends(get_sess
     tx_code = payload.get("transaction_code")
     if not tx_code:
         raise HTTPException(status_code=400, detail="Missing transaction_code")
-        
-    tx = get_transaction(tx_code, session)
-    if not tx:
-        raise HTTPException(status_code=400, detail="Unknown transaction_code — ignoring")
 
     result = await process_webhook(payload, session)
     return result

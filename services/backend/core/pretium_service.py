@@ -474,16 +474,30 @@ def _grant_premium_for_onramp(tx: "PretiumTransaction", session: Session) -> boo
     if existing:
         return False
 
-    # Resolve (or create) the User row for this telegram_user_id
-    user = get_user_by_telegram(tx.telegram_user_id, session)
+    # Resolve (or create) the User row.
+    # Dashboard on-ramps pass the wallet address as telegram_user_id (no real
+    # Telegram account involved), so try wallet lookup first for 0x addresses.
+    from services.backend.core.paper_trading import get_user_by_wallet
+    user = None
+    if tx.telegram_user_id and tx.telegram_user_id.startswith("0x"):
+        user = get_user_by_wallet(tx.telegram_user_id.lower(), session)
     if not user:
-        # First time this Telegram user appears — create a synthetic wallet row
-        user = connect_wallet(
-            wallet_address=f"telegram:{tx.telegram_user_id}",
-            session=session,
-            telegram_id=tx.telegram_user_id,
-            username=f"telegram_{tx.telegram_user_id}",
-        )
+        user = get_user_by_telegram(tx.telegram_user_id, session)
+    if not user:
+        # First time this identity appears — create a row anchored to the wallet
+        # address if it looks like one, otherwise use a synthetic telegram: row.
+        if tx.telegram_user_id and tx.telegram_user_id.startswith("0x"):
+            user = connect_wallet(
+                wallet_address=tx.telegram_user_id.lower(),
+                session=session,
+            )
+        else:
+            user = connect_wallet(
+                wallet_address=f"telegram:{tx.telegram_user_id}",
+                session=session,
+                telegram_id=tx.telegram_user_id,
+                username=f"telegram_{tx.telegram_user_id}",
+            )
 
     payment = Payment(
         user_id=user.id,
@@ -508,6 +522,7 @@ def _grant_premium_for_onramp(tx: "PretiumTransaction", session: Session) -> boo
 def _tx_to_dict(tx: PretiumTransaction) -> dict:
     return {
         "transaction_id": tx.id,
+        "telegram_user_id": tx.telegram_user_id,
         "type": tx.type,
         "status": tx.status,
         "amount_fiat": tx.amount_fiat,

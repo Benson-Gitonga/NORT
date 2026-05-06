@@ -16,9 +16,10 @@ market_id="__global__" so the agent remembers prior exchanges.
 
 import os
 import httpx
+import logging
 import time
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from sqlmodel import Session, select
@@ -26,8 +27,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 import re
 from services.backend.core.policies import check_policy
+from services.backend.api.auth import get_current_user
 from services.backend.data.database import engine
 from services.backend.data.models import Conversation, AuditLog, User
 
@@ -37,26 +41,25 @@ from services.backend.data.models import Conversation, AuditLog, User
 # (regardless of how it's phrased) counts against the same quota.
 # ─────────────────────────────────────────────────────────────
 
-FREE_COMBINED_LIMIT   = 10   # total LLM calls per window
-COMBINED_WINDOW_HOURS = 6    # prod value — overridden below for testing
+FREE_COMBINED_LIMIT   = 10   # total LLM calls per 6-hour window
+COMBINED_WINDOW_HOURS = 6
 
 
-def check_combined_rate_limit(user_id: str) -> None:
+def check_combined_rate_limit(user_id: str, premium: bool = False) -> None:
     """
     Counts ALL AuditLog rows with action IN ('advice', 'chat') for this
     user in the last COMBINED_WINDOW_HOURS hours.
 
     Raises HTTP 429 if the user has exhausted their free quota.
-    Premium users (confirmed payment) are exempt.
+    Premium users are exempt, but premium status must come from verified auth.
     """
     if not user_id or user_id == "anonymous":
         return
 
-    from services.backend.core.x402_verifier import has_any_confirmed_payment
-    if has_any_confirmed_payment(user_id):
+    if premium:
         return   # premium — unlimited
 
-    window_start = datetime.now(timezone.utc) - timedelta(minutes=5)  # TEST (prod: hours=6)
+    window_start = datetime.now(timezone.utc) - timedelta(hours=COMBINED_WINDOW_HOURS)
     with Session(engine) as session:
         all_logs = session.exec(
             select(AuditLog)
@@ -71,7 +74,7 @@ def check_combined_rate_limit(user_id: str) -> None:
             oldest_ts = min(l.created_at for l in user_logs)
             if oldest_ts.tzinfo is None:
                 oldest_ts = oldest_ts.replace(tzinfo=timezone.utc)
-            refresh_at     = oldest_ts + timedelta(minutes=5)  # TEST (prod: hours=6)
+            refresh_at     = oldest_ts + timedelta(hours=COMBINED_WINDOW_HOURS)
             refresh_at_eat = refresh_at + timedelta(hours=3)   # EAT = UTC+3
             refresh_str    = refresh_at_eat.strftime("%I:%M %p EAT").lstrip("0")
             refresh_hint   = f" Your limit resets at {refresh_str}."
@@ -159,7 +162,7 @@ def _resolve_nort_user_id(user_id: str, session) -> Optional[int]:
                 return user.id
 
     except Exception as e:
-        print(f"[Chat] _resolve_nort_user_id failed (non-fatal): {e}")
+        logger.warning("[Chat] _resolve_nort_user_id failed (non-fatal): %s", e)
     return None
 
 
@@ -193,7 +196,7 @@ def _load_history(user_id: str) -> list:
                 if "role" in m and "content" in m
             ]
     except Exception as e:
-        print(f"[Chat] History load error (non-fatal): {e}")
+        logger.warning("[Chat] History load error (non-fatal): %s", e)
         return []
 
 
@@ -238,7 +241,7 @@ def _save_turn(user_id: str, user_msg: str, assistant_reply: str) -> None:
             conv.updated_at = datetime.utcnow()
             session.commit()
     except Exception as e:
-        print(f"[Chat] History save error (non-fatal): {e}")
+        logger.warning("[Chat] History save error (non-fatal): %s", e)
 
 
 def _write_advice_audit_log(
@@ -260,7 +263,7 @@ def _write_advice_audit_log(
             ))
             session.commit()
     except Exception as e:
-        print(f"[Chat] Advice audit write failed (non-fatal): {e}")
+        logger.warning("[Chat] Advice audit write failed (non-fatal): %s", e)
 
 # ─── LLM call ────────────────────────────────────────────────────────────────
 
@@ -294,11 +297,11 @@ async def _call_llm(messages: list, premium: bool = False) -> str:
 
     resp = await _post(OPENROUTER_API_KEY)
     if resp.status_code == 429 and OPENROUTER_API_KEY_FALLBACK:
-        print("[Chat] Primary key rate-limited — retrying with fallback key")
+        logger.warning("[Chat] Primary key rate-limited — retrying with fallback key")
         resp = await _post(OPENROUTER_API_KEY_FALLBACK)
 
     if resp.status_code != 200:
-        print(f"[Chat] OpenRouter error {resp.status_code}: {resp.text[:200]}")
+        logger.error("[Chat] OpenRouter error %d: %s", resp.status_code, resp.text[:200])
         raise HTTPException(status_code=503, detail=f"AI service error: {resp.status_code}")
 
     return resp.json()["choices"][0]["message"]["content"].strip()
@@ -307,7 +310,7 @@ async def _call_llm(messages: list, premium: bool = False) -> str:
 # ─── Endpoint ─────────────────────────────────────────────────────────────────
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     """
     General-purpose conversational AI endpoint.
     Accepts a free-text message and returns a reply.
@@ -320,26 +323,33 @@ async def chat(request: ChatRequest):
     # as a chat message to bypass the /advice limit.  Every LLM interaction
     # now draws from the same FREE_COMBINED_LIMIT quota, exactly like
     # ChatGPT / Claude free tiers work.
-    user_id = request.user_id or "anonymous"
-    check_combined_rate_limit(user_id)
+    # ── Identity: prefer the Privy JWT wallet over the body user_id ────────
+    # Body user_id is still accepted for Telegram/internal callers that don't
+    # carry a JWT, but cannot override a verified JWT wallet for premium checks.
+    jwt_wallet = (current_user.get("wallet") or "").strip() or None
+    body_user_id = (request.user_id or "").strip() or None
+    user_id = jwt_wallet or body_user_id or "anonymous"
+
+    is_premium_user = False
+    if jwt_wallet:
+        from services.backend.core.x402_verifier import has_any_confirmed_payment
+        is_premium_user = has_any_confirmed_payment(jwt_wallet)
+
+    check_combined_rate_limit(user_id, premium=is_premium_user)
 
     # Policy gate — block prompt injection
     policy = check_policy(request.message)
     if not policy["allowed"]:
         raise HTTPException(status_code=400, detail=policy["reason"])
 
-    # Build message history
-    history  = _load_history(user_id) if request.user_id else []
+    # Build message history — use resolved user_id so JWT users get their own history
+    history = _load_history(user_id) if user_id != "anonymous" else []
 
     # ── Free-tier gate: only /advice commands are allowed ────────────────────
     # General chat (asking questions, rephrasing advice requests, etc.) is a
     # Premium feature.  If a free user sends anything other than /advice <id>,
     # return a hard upgrade prompt without calling the LLM.
     advice_match = ADVICE_CMD_RE.match(request.message.strip())
-    is_premium_user = False
-    if request.user_id and request.user_id != "anonymous":
-        from services.backend.core.x402_verifier import has_any_confirmed_payment
-        is_premium_user = has_any_confirmed_payment(request.user_id)
 
     if not is_premium_user and not advice_match:
         upgrade_reply = (
@@ -347,9 +357,9 @@ async def chat(request: ChatRequest):
             "Free accounts can use /advice <market_id> to get AI analysis on any market.\n\n"
             "Upgrade to Premium for unlimited chat, deep-dive analysis, and exact entry/exit targets."
         )
-        if request.user_id:
-            _save_turn(request.user_id, request.message, upgrade_reply)
-        return ChatResponse(reply=upgrade_reply, user_id=request.user_id)
+        if user_id and user_id != "anonymous":
+            _save_turn(user_id, request.message, upgrade_reply)
+        return ChatResponse(reply=upgrade_reply, user_id=user_id if user_id != "anonymous" else None)
 
     # ── /advice <market_id> command handler ──────────────────────────────────
     # If the user types /advice <id>, run the full advice pipeline and return
@@ -368,8 +378,8 @@ async def chat(request: ChatRequest):
             # Resolve premium status for this user
             user_is_premium = is_premium_user  # already computed above from has_any_confirmed_payment
 
-            # Enforce rate limit (premium users use hourly limit, free use 5-min window)
-            check_rate_limit(request.user_id, premium=user_is_premium)
+            # Enforce rate limit using resolved user_id (JWT-first)
+            check_rate_limit(user_id, premium=user_is_premium)
 
             market_data   = fetch_market_data(market_id)
             market_signal = fetch_market_signal(market_id)
@@ -384,7 +394,7 @@ async def chat(request: ChatRequest):
                 market_data=market_data,
                 market_signal=market_signal,
                 search_context=search_context,
-                telegram_id=request.user_id,
+                telegram_id=user_id,
                 premium=user_is_premium,
                 language=request.language,
             )
@@ -395,7 +405,34 @@ async def chat(request: ChatRequest):
             )
             advice_success = True
 
-            plan_label = {"BUY YES": "BUY YES", "BUY NO": "BUY NO", "WAIT": "WAIT"}.get(resp.suggested_plan, resp.suggested_plan)
+            # Translate advice fields + plan label if Swahili requested (any tier)
+            if request.language == "sw":
+                from deep_translator import GoogleTranslator
+                _tr = GoogleTranslator(source="en", target="sw")
+                try:
+                    resp.summary      = _tr.translate(resp.summary)
+                    resp.why_trending = _tr.translate(resp.why_trending)
+                    resp.risk_factors = [_tr.translate(rf) for rf in (resp.risk_factors or [])]
+                    resp.disclaimer   = _tr.translate(resp.disclaimer)
+                except Exception as _te:
+                    logger.warning("[Chat] Swahili translation error (non-fatal): %s", _te)
+                plan_map = {"BUY YES": "NUNUA NDIYO", "BUY NO": "NUNUA HAPANA", "WAIT": "SUBIRI"}
+                resp.suggested_plan = plan_map.get(resp.suggested_plan, resp.suggested_plan)
+
+            plan_label = resp.suggested_plan
+
+            # Section headers — swap to Swahili if needed
+            h_trending  = "INAENDELEA KWA NINI" if request.language == "sw" else "WHY IT'S TRENDING"
+            h_risks     = "HATARI KUU"           if request.language == "sw" else "KEY RISKS"
+            h_verdict   = "UAMUZI"               if request.language == "sw" else "VERDICT"
+            h_confidence = "Uhakika"             if request.language == "sw" else "Confidence"
+            upgrade_cta = (
+                "Boresha hadi Premium kwa uchambuzi kamili: kwa nini inaendelea, "
+                "hatari kuu, na malengo sahihi ya nafasi."
+                if request.language == "sw" else
+                "Upgrade to Premium for full analysis: why it's trending, "
+                "key risks, and exact position targets."
+            )
 
             if user_is_premium:
                 # Full deep-dive for premium users
@@ -403,12 +440,12 @@ async def chat(request: ChatRequest):
                 reply = (
                     f"{market_question}\n\n"
                     f"{resp.summary}\n\n"
-                    f"WHY IT'S TRENDING\n"
+                    f"{h_trending}\n"
                     f"{resp.why_trending}\n\n"
-                    f"KEY RISKS\n"
+                    f"{h_risks}\n"
                     f"{risks_text}\n\n"
-                    f"VERDICT: {plan_label}\n"
-                    f"Confidence: {int(resp.confidence * 100)}%\n\n"
+                    f"{h_verdict}: {plan_label}\n"
+                    f"{h_confidence}: {int(resp.confidence * 100)}%\n\n"
                     f"{resp.disclaimer}"
                 )
             else:
@@ -416,10 +453,9 @@ async def chat(request: ChatRequest):
                 reply = (
                     f"{market_question}\n\n"
                     f"{resp.summary}\n\n"
-                    f"Upgrade to Premium for full analysis: why it's trending, "
-                    f"key risks, and exact position targets.\n\n"
-                    f"VERDICT: {plan_label}\n"
-                    f"Confidence: {int(resp.confidence * 100)}%\n\n"
+                    f"{upgrade_cta}\n\n"
+                    f"{h_verdict}: {plan_label}\n"
+                    f"{h_confidence}: {int(resp.confidence * 100)}%\n\n"
                     f"{resp.disclaimer}"
                 )
         except HTTPException as he:
@@ -428,21 +464,21 @@ async def chat(request: ChatRequest):
             else:
                 reply = f"Sorry, I couldn't fetch advice for market {market_id} right now. Try again or tap a signal card."
         except Exception as e:
-            print(f"[Chat] /advice pipeline error: {e}")
+            logger.error("[Chat] /advice pipeline error: %s", e)
             reply = f"Sorry, I couldn't fetch advice for market {market_id} right now. Try again or tap a signal card."
 
         elapsed_ms = int((time.monotonic() - start) * 1000)
         _write_advice_audit_log(
-            user_id=request.user_id,
+            user_id=user_id if user_id != "anonymous" else None,
             market_id=market_id,
             premium=user_is_premium,
             success=advice_success,
             response_time_ms=elapsed_ms,
         )
 
-        if request.user_id:
-            _save_turn(request.user_id, request.message, reply)
-        return ChatResponse(reply=reply, user_id=request.user_id)
+        if user_id and user_id != "anonymous":
+            _save_turn(user_id, request.message, reply)
+        return ChatResponse(reply=reply, user_id=user_id if user_id != "anonymous" else None)
 
     # ── Normal conversational message ─────────────────────────────────────────
     history.append({"role": "user", "content": request.message})
@@ -450,20 +486,17 @@ async def chat(request: ChatRequest):
     # Call LLM — premium users get Claude Sonnet, free get Llama 8B
     reply = await _call_llm(history, premium=is_premium_user)
 
-    # Persist turn
-    if request.user_id:
-        _save_turn(request.user_id, request.message, reply)
+    # Persist turn under the resolved identity so JWT users keep their history.
+    if user_id and user_id != "anonymous":
+        _save_turn(user_id, request.message, reply)
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    print(f"[Chat] user={user_id} elapsed={elapsed_ms}ms reply_len={len(reply)}")
+    logger.debug("[Chat] user=%s elapsed=%dms reply_len=%d", user_id, elapsed_ms, len(reply))
 
-    # Write audit log so this chat message counts against the shared quota.
-    # action="chat" is counted alongside action="advice" by check_combined_rate_limit.
-    # Premium users are exempt from the quota but we still log for analytics.
     try:
         with Session(engine) as session:
             session.add(AuditLog(
-                telegram_user_id=request.user_id,
+                telegram_user_id=user_id if user_id != "anonymous" else None,
                 action="chat",
                 market_id=None,
                 premium=is_premium_user,
@@ -472,6 +505,6 @@ async def chat(request: ChatRequest):
             ))
             session.commit()
     except Exception as e:
-        print(f"[Chat] Audit log write failed (non-fatal): {e}")
+        logger.warning("[Chat] Audit log write failed (non-fatal): %s", e)
 
-    return ChatResponse(reply=reply, user_id=request.user_id)
+    return ChatResponse(reply=reply, user_id=user_id if user_id != "anonymous" else None)

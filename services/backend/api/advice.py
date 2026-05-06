@@ -1,7 +1,7 @@
 import re
+import logging
 import time
 import json
-import httpx
 import os
 import asyncio
 from datetime import datetime, timezone, timedelta
@@ -16,10 +16,13 @@ from deep_translator import GoogleTranslator
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 from services.backend.core.orchestrator import run_orchestrator
-from services.backend.core.prompt_templates import ADVICE_SYSTEM_PROMPT
 from services.backend.core.policies import check_policy
-from services.backend.core.executor import AutoTradeEngine
+# AutoTradeEngine import commented out — engine is disabled until auto-trade
+# is fully tested and the UI toggle is live. Uncomment to re-enable.
+# from services.backend.core.executor import AutoTradeEngine
 from services.backend.core.x402_verifier import has_premium_access, has_any_confirmed_payment, payment_required_payload
 from services.backend.data.database import engine
 from services.backend.data.models import Market, AISignal, AuditLog, Conversation
@@ -44,7 +47,7 @@ PREMIUM_HOURLY_LIMIT = 10   # premium users: 10 per hour (effectively unlimited 
 
 class AdviceRequest(BaseModel):
     market_id: str
-    telegram_id: Optional[str] = None   # wallet address for dashboard users, telegram ID for bot users
+    user_id: Optional[str] = None   # wallet address (dashboard) or telegram ID (bot)
     premium: bool = False
     language: str = "en"
     user_message: Optional[str] = None
@@ -74,7 +77,7 @@ def tavily_search(query: str, max_results: int = 5) -> str:
             return "No results found."
         return "\n".join([f"- {r['title']}: {r['content']}" for r in results])
     except Exception as e:
-        print(f"[Tavily Error] {e}")
+        logger.debug("[Tavily] Search error: %s", e)
         return "Search unavailable."
 
 # ─────────────────────────────────────────────────────────────
@@ -88,10 +91,6 @@ async def search_prefetch(market_question: str) -> dict:
     social_query  = f'"{market_question}" reddit OR twitter OR sentiment OR community opinion'
     context_query = f'"{market_question}" explained OR background OR history OR resolution'
 
-    print(f"[Search] News:    {news_query}")
-    print(f"[Search] Social:  {social_query}")
-    print(f"[Search] Context: {context_query}")
-
     news_task    = loop.run_in_executor(None, tavily_search, news_query,    6)
     social_task  = loop.run_in_executor(None, tavily_search, social_query,  5)
     context_task = loop.run_in_executor(None, tavily_search, context_query, 4)
@@ -102,14 +101,10 @@ async def search_prefetch(market_question: str) -> dict:
             timeout=15.0
         )
     except asyncio.TimeoutError:
-        print("[Search] Pre-fetch timed out — continuing with empty context")
+        logger.warning("[Search] Pre-fetch timed out — continuing with empty context")
         news_results    = "Search timed out."
         social_results  = "Search timed out."
         context_results = "Search timed out."
-
-    print(f"[Search] News results:\n{news_results}")
-    print(f"[Search] Social results:\n{social_results}")
-    print(f"[Search] Context results:\n{context_results}")
 
     return {
         "news":    news_results,
@@ -121,81 +116,6 @@ async def search_prefetch(market_question: str) -> dict:
             "context": context_query
         }
     }
-
-# ─────────────────────────────────────────────────────────────
-# NORT Bot Caller — single-shot enriched prompt
-# ─────────────────────────────────────────────────────────────
-
-async def call_nort_bot(
-    market_id: str,
-    market_question: str,
-    market_data: dict,
-    market_signal: dict,
-    search_context: dict
-) -> str:
-    if not OPENROUTER_API_KEY:
-        raise HTTPException(status_code=503, detail="Missing OPENROUTER_API_KEY in .env")
-
-    user_message = f"""/advice {market_id}
-
-MARKET QUESTION: {market_question}
-
-━━━ MARKET DATA (Neon) ━━━
-{json.dumps(market_data, indent=2)}
-
-━━━ AI SIGNAL FOR THIS MARKET ━━━
-{json.dumps(market_signal, indent=2) if market_signal else "No signal data available."}
-
-━━━ RECENT NEWS ━━━
-{search_context['news']}
-
-━━━ SOCIAL BUZZ & SENTIMENT (Reddit / Twitter) ━━━
-{search_context['social']}
-
-━━━ BACKGROUND & CONTEXT ━━━
-{search_context['context']}
-
-━━━ YOUR TASK ━━━
-Using ALL the data above — market data, AI signal, news, social sentiment,
-and background context — provide a comprehensive analysis of this prediction market.
-Reference specific data points from the news and social sections in your analysis.
-Return JSON only. The market_id field must be exactly: {market_id}
-"""
-
-    payload = {
-        "model": "meta-llama/llama-3.3-70b-instruct:free",
-        "messages": [
-            {"role": "system", "content": ADVICE_SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message}
-        ]
-    }
-
-    print(f"[NORT Bot] Sending prompt for market {market_id}")
-
-    async with httpx.AsyncClient(timeout=120) as client:
-        try:
-            response = await client.post(
-                OPENROUTER_URL,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://nort.onrender.com",
-                    "X-Title": "Nort Advisor"
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-
-        except httpx.ConnectError:
-            raise HTTPException(status_code=503, detail="NORT Bot gateway unreachable")
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=503, detail=f"NORT Bot error {e.response.status_code}")
-
-# ─────────────────────────────────────────────────────────────
-# Debug Endpoint
-# ─────────────────────────────────────────────────────────────
 
 @router.get("/usage")
 async def get_advice_usage(
@@ -253,18 +173,6 @@ async def get_advice_usage(
         "refresh_cycle":    "6h",
     }
 
-
-@router.get("/advice/debug")
-async def debug_openrouter():
-    market_question = "Will MicroStrategy sell any Bitcoin in 2025?"
-    search_context = await search_prefetch(market_question)
-    raw = await run_orchestrator(
-        market_id="debug",
-        market_data={"question": market_question},
-        market_signal={},
-        search_context=search_context
-    )
-    return {"raw": raw, "search_context": search_context}
 
 # ─────────────────────────────────────────────────────────────
 # LLM Response Parser
@@ -353,11 +261,10 @@ def parse_response(
 
     # Log the raw response to help debug future failures
     if not cleaned.startswith("{"):
-        print(f"[ParseResponse] WARNING: Could not find JSON in response. Raw (first 300 chars): {raw[:300]}")
+        logger.warning("[ParseResponse] Could not find JSON in response. Raw (first 300 chars): %s", raw[:300])
 
-    # If response was truncated mid-JSON, attempt to close it so json.loads has a chance
     if cleaned.startswith("{") and not cleaned.endswith("}"):
-        print(f"[ParseResponse] WARNING: JSON appears truncated — attempting recovery")
+        logger.warning("[ParseResponse] JSON appears truncated — attempting recovery")
         # Close any open string, then close the object
         if cleaned.count('"') % 2 != 0:
             cleaned += '"'
@@ -366,10 +273,10 @@ def parse_response(
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        print(f"[ParseResponse] JSON decode failed. Cleaned (first 300 chars): {cleaned[:300]}")
+        logger.warning("[ParseResponse] JSON decode failed. Cleaned (first 300 chars): %s", cleaned[:300])
         salvaged = _salvage_partial_response(cleaned)
         if salvaged:
-            print("[ParseResponse] Recovered partial response via field extraction")
+            logger.warning("[ParseResponse] Recovered partial response via field extraction")
             data = salvaged
         else:
             return AdviceResponse(
@@ -398,7 +305,7 @@ def parse_response(
     sent_bearish  = sentiment_label == "Bearish"
     agents_disagree = (tech_bullish and sent_bearish) or (tech_bearish and sent_bullish)
     if agents_disagree and confidence > 0.70:
-        print(f"[ConfidenceCap] Technical={technical_momentum} vs Sentiment={sentiment_label} — capping {confidence:.2f} → 0.70")
+        logger.info("[ConfidenceCap] Technical=%s vs Sentiment=%s — capping %.2f → 0.70", technical_momentum, sentiment_label, confidence)
         confidence = 0.70
 
     return AdviceResponse(
@@ -430,7 +337,7 @@ def fetch_market_data(market_id: str) -> dict:
         with Session(engine) as session:
             market = session.get(Market, market_id)
             if not market:
-                print(f"[Market] ID {market_id} not found in Neon")
+                logger.debug("[Market] ID %s not found in Neon", market_id)
                 return {}
             return {
                 "id":             market.id,
@@ -445,7 +352,7 @@ def fetch_market_data(market_id: str) -> dict:
             }
     except Exception as e:
         import traceback
-        print(f"[Market] Neon fetch failed: {e}\n{traceback.format_exc()}")
+        logger.error("[Market] Neon fetch failed: %s\n%s", e, traceback.format_exc())
         return {}
 
 
@@ -464,7 +371,7 @@ def fetch_market_signal(market_id: str) -> dict:
             )
             signal = session.exec(statement).first()
             if not signal:
-                print(f"[Signal] No signal found for market {market_id}")
+                logger.debug("[Signal] No signal found for market %s", market_id)
                 return {}
             return {
                 "market_id":        signal.market_id,
@@ -475,23 +382,22 @@ def fetch_market_signal(market_id: str) -> dict:
             }
     except Exception as e:
         import traceback
-        print(f"[Signal] Neon fetch failed: {e}\n{traceback.format_exc()}")
+        logger.error("[Signal] Neon fetch failed: %s\n%s", e, traceback.format_exc())
         return {}
 
 # ─────────────────────────────────────────────────────────────
-# Rate Limit Helper  (Task 3)
-# Max 5 advice calls per user per hour, checked against AuditLog
+# Rate Limit Helper
+# Free users: 10 combined advice+chat calls per 6-hour window
+# Premium users: 10 calls per hour (effectively unlimited for normal use)
 # ─────────────────────────────────────────────────────────────
 
 def check_rate_limit(telegram_id: str, premium: bool = False) -> None:
     if not telegram_id:
         return
     if premium:
-        window_start = datetime.now(timezone.utc) - timedelta(hours=1)
-        limit = PREMIUM_HOURLY_LIMIT
-    else:
-        window_start = datetime.now(timezone.utc) - timedelta(hours=6)
-        limit = FREE_DAILY_LIMIT
+        return   # Premium users are truly unlimited — no cap applied
+    window_start = datetime.now(timezone.utc) - timedelta(hours=6)
+    limit = FREE_DAILY_LIMIT
 
     with Session(engine) as session:
         all_logs = session.exec(
@@ -537,7 +443,7 @@ def write_audit_log(
             session.add(log)
             session.commit()
     except Exception as e:
-        print(f"[AuditLog] Write failed (non-fatal): {e}")
+        logger.warning("[AuditLog] Write failed (non-fatal): %s", e)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -592,10 +498,10 @@ def get_cached_advice(
                 f"Cached advice from {age_mins} minute(s) ago. "
                 f"Full analysis skipped to save resources."
             )
-            print(f"[Cache] HIT for user={telegram_id} market={market_id} age={age_mins}m")
+            logger.debug("[Cache] HIT for user=%s market=%s age=%dm", telegram_id, market_id, age_mins)
             return cached
     except Exception as e:
-        print(f"[Cache] Read error (non-fatal): {e}")
+        logger.warning("[Cache] Read error (non-fatal): %s", e)
         return None
 
 
@@ -625,7 +531,7 @@ def load_conversation_history(telegram_id: Optional[str], market_id: str) -> lis
                 if "role" in m and "content" in m
             ]
     except Exception as e:
-        print(f"[Conversation] Load error (non-fatal): {e}")
+        logger.warning("[Conversation] Load error (non-fatal): %s", e)
         return []
 
 
@@ -658,14 +564,14 @@ def save_conversation_turn(
                 "role": "assistant",
                 "content": advice.summary,
                 "ts": now_str,
-                "advice": advice.dict(),   # full payload for cache reconstruction
+                "advice": advice.model_dump(),   # full payload for cache reconstruction
             })
             # Keep only the last 40 messages (20 exchanges) to bound DB growth
             conv.messages = messages[-40:]
             conv.updated_at = datetime.utcnow()
             session.commit()
     except Exception as e:
-        print(f"[Conversation] Save error (non-fatal): {e}")
+        logger.warning("[Conversation] Save error (non-fatal): %s", e)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -693,17 +599,25 @@ async def get_advice(
     start_time = time.monotonic()
     success = False
 
-    effective_user_id = current_user.get("wallet") or body_req.telegram_id
+    # ── Identity resolution ────────────────────────────────────────────────
+    # jwt_wallet      — verified by Privy JWT. The ONLY source trusted for
+    #                   premium checks and payment gating.
+    # effective_user_id — best available identity for rate-limiting and audit.
+    #                   Falls back to body user_id so Telegram/internal callers
+    #                   (which don't carry a JWT) are still tracked correctly.
+    #                   Body user_id alone NEVER grants premium access.
+    jwt_wallet = (current_user.get("wallet") or "").strip() or None
+    effective_user_id = jwt_wallet or body_req.user_id or None
 
-    # ── Auto-upgrade: if the user has a confirmed payment, always give Premium ──
-    # This fixes state-lag where a user has paid but the frontend still sends
-    # premium=False because the local tier state hasn't refreshed yet.
-    if not body_req.premium and effective_user_id:
-        if has_any_confirmed_payment(effective_user_id):
-            print(f"[AutoUpgrade] Upgrading {effective_user_id} to Premium (confirmed payment found)")
+    # ── Auto-upgrade (state-lag fix) ─────────────────────────────────────────
+    # Only fires when we have a verified JWT wallet — prevents body user_id
+    # from being used to impersonate a paid wallet.
+    if not body_req.premium and jwt_wallet:
+        if has_any_confirmed_payment(jwt_wallet):
+            logger.info("[AutoUpgrade] Upgrading %s to Premium (confirmed payment found)", jwt_wallet)
             body_req.premium = True
 
-    # Rate limit check
+    # Rate limit check — uses effective_user_id so Telegram callers are tracked
     check_rate_limit(effective_user_id, body_req.premium)
 
     # Policy gate
@@ -712,10 +626,10 @@ async def get_advice(
         raise HTTPException(status_code=400, detail=policy["reason"])
 
     try:
-        # Gate: only block if the user has NO confirmed payment at all.
-        # has_any_confirmed_payment is the mirror of the auto-upgrade check above,
-        # so the two checks can never contradict each other.
-        if body_req.premium and not has_any_confirmed_payment(effective_user_id):
+        # ── Payment gate ───────────────────────────────────────────────────
+        # Premium requires a verified JWT wallet with a confirmed payment.
+        # A body-only user_id cannot pass this gate — prevents impersonation.
+        if body_req.premium and not (jwt_wallet and has_any_confirmed_payment(jwt_wallet)):
             return JSONResponse(
                 status_code=402,
                 content=payment_required_payload(body_req.market_id),
@@ -736,7 +650,7 @@ async def get_advice(
             f"prediction market {body_req.market_id}"
         ).strip()
 
-        print(f"[Agent] Market {body_req.market_id}: {market_question}")
+        logger.debug("[Agent] Market %s: %s", body_req.market_id, market_question)
 
         history = load_conversation_history(effective_user_id, body_req.market_id) if body_req.premium else []
         if body_req.user_message:
@@ -768,7 +682,7 @@ async def get_advice(
             sentiment_label=sentiment_result.get("label", "Neutral"),
         )
 
-        if body_req.premium and body_req.language == "sw":
+        if body_req.language == "sw":
             translator = GoogleTranslator(source="en", target="sw")
             try:
                 response_obj.summary       = translator.translate(response_obj.summary)
@@ -779,7 +693,7 @@ async def get_advice(
                 if response_obj.suggested_plan in plan_map:
                     response_obj.suggested_plan = plan_map[response_obj.suggested_plan]
             except Exception as e:
-                print(f"[Translation Error] {e}")
+                logger.warning("[Translation] Swahili translation error (non-fatal): %s", e)
 
         success = True
 
@@ -790,21 +704,27 @@ async def get_advice(
             advice=response_obj,
         )
 
-        if effective_user_id:
-            try:
-                minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
-                advice_id = f"{effective_user_id}-{body_req.market_id}-{minute_bucket}"
-                auto_result = await AutoTradeEngine.execute(
-                    market_id=body_req.market_id,
-                    suggested_plan=response_obj.suggested_plan,
-                    confidence=response_obj.confidence,
-                    telegram_id=effective_user_id,
-                    advice_id=advice_id,
-                )
-                response_obj.auto_trade_result = auto_result
-            except Exception as e:
-                print(f"[AutoTrade] Engine error (non-fatal): {e}")
-                response_obj.auto_trade_result = {"executed": False, "reason": str(e), "mode": "error"}
+        # ── AutoTradeEngine disabled ───────────────────────────────────────────
+        # The engine is commented out until the auto-trade UI toggle is live and
+        # fully tested. Old UserPermission rows with auto_trade_enabled=True would
+        # otherwise trigger execution paths silently. Re-enable by uncommenting
+        # the import above and this block.
+        #
+        # if effective_user_id:
+        #     try:
+        #         minute_bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+        #         advice_id = f"{effective_user_id}-{body_req.market_id}-{minute_bucket}"
+        #         auto_result = await AutoTradeEngine.execute(
+        #             market_id=body_req.market_id,
+        #             suggested_plan=response_obj.suggested_plan,
+        #             confidence=response_obj.confidence,
+        #             telegram_id=effective_user_id,
+        #             advice_id=advice_id,
+        #         )
+        #         response_obj.auto_trade_result = auto_result
+        #     except Exception as e:
+        #         logger.error("[AutoTrade] Engine error (non-fatal): %s", e)
+        #         response_obj.auto_trade_result = {"executed": False, "reason": str(e), "mode": "error"}
 
         return response_obj
 

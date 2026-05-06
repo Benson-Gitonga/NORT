@@ -58,13 +58,9 @@ export default function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const isAuthenticated = checkAuth(request);
 
-  // 1. Root: unauthenticated → local login (dev) or external landing (prod)
-  //          authenticated   → serve the Next.js feed
+  // 1. Root: unauthenticated → external landing; authenticated → serve the Next.js feed
   if (pathname === '/') {
     if (!isAuthenticated) {
-      if (process.env.NODE_ENV === 'development') {
-        return NextResponse.redirect(new URL('/login', request.url));
-      }
       return NextResponse.rewrite(
         new URL('https://nort-landing-nine.vercel.app', request.url)
       );

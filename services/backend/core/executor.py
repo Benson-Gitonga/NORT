@@ -16,9 +16,10 @@ Usage (from advice.py or a future /autotrade endpoint):
     result = await AutoTradeEngine.execute(advice_response, telegram_id, advice_id)
 """
 
-import asyncio
 import hashlib
+import hmac
 import httpx
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,10 +28,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 from services.backend.data.database import engine
 from services.backend.data.models import Market, UserPermission, PendingTrade
 
-# Internal execution backend URL (Intern 4's routes)
+# Internal execution backend URL
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 AGENT_HMAC_SECRET = os.getenv("AGENT_HMAC_SECRET", "dev-secret-change-in-prod")
 
@@ -41,9 +44,8 @@ AGENT_HMAC_SECRET = os.getenv("AGENT_HMAC_SECRET", "dev-secret-change-in-prod")
 def sign_payload(payload_str: str) -> str:
     """
     Signs the payload with the shared AGENT_HMAC_SECRET.
-    Intern 4's route MUST verify this signature before executing any trade.
+    The trade route MUST verify this signature before executing any trade.
     """
-    import hmac
     return hmac.new(
         AGENT_HMAC_SECRET.encode(),
         payload_str.encode(),
@@ -65,7 +67,7 @@ def _market_exists_in_db(market_id: str) -> bool:
             market = session.get(Market, market_id)
             return market is not None
     except Exception as e:
-        print(f"[AutoTradeEngine] Market DB check failed: {e}")
+        logger.error("[AutoTradeEngine] Market DB check failed: %s", e)
         return False  # Fail closed — deny if we can't verify
 
 
@@ -77,7 +79,7 @@ def _load_user_permission(user_id: str) -> Optional["UserPermission"]:
                 .where(UserPermission.telegram_user_id == user_id)
             ).first()
     except Exception as e:
-        print(f"[AutoTradeEngine] Permission load failed: {e}")
+        logger.error("[AutoTradeEngine] Permission load failed: %s", e)
         return None
 
 # ─────────────────────────────────────────────────────────────
@@ -108,7 +110,7 @@ class AutoTradeEngine:
             mode:     str  ("paper" | "real" | "skipped")
         """
 
-        print(f"[AutoTradeEngine] Evaluating: {market_id} | {suggested_plan} | conf={confidence}")
+        logger.debug("[AutoTradeEngine] Evaluating: %s | %s | conf=%.2f", market_id, suggested_plan, confidence)
 
         # ── GATE 0: WAIT means do nothing ────────────────────────────────────
         if suggested_plan == "WAIT":
@@ -116,7 +118,7 @@ class AutoTradeEngine:
 
         # ── GATE 1: Market must exist in Neon DB (anti-prompt-injection) ─────
         if not _market_exists_in_db(market_id):
-            print(f"[AutoTradeEngine] BLOCKED — market_id '{market_id}' not in Neon DB")
+            logger.warning("[AutoTradeEngine] BLOCKED — market_id '%s' not in Neon DB", market_id)
             return {
                 "executed": False,
                 "reason":   f"Market '{market_id}' is not in our approved market list. Trade blocked.",
@@ -142,9 +144,7 @@ class AutoTradeEngine:
             }
 
         # ── GATE 4: Determine trade amount (hard-capped at user's limit) ─────
-        # Use a default of 10% of the user's max_bet as the base
-        raw_amount   = round(perm.max_bet_size * 0.10, 2)
-        safe_amount  = min(raw_amount, perm.max_bet_size)  # Hard cap — AI cannot exceed this
+        safe_amount = round(min(perm.max_bet_size * 0.10, perm.max_bet_size), 2)
         if safe_amount <= 0:
             return {"executed": False, "reason": "Calculated trade amount is $0. Check max_bet_size setting.", "mode": "skipped"}
 
@@ -156,7 +156,7 @@ class AutoTradeEngine:
         # Anything else is blocked as a safety fallback.
         VALID_TRADE_MODES = {"paper", "real", "confirm"}
         if perm.trade_mode not in VALID_TRADE_MODES:
-            print(f"[AutoTradeEngine] BLOCKED — unknown trade_mode '{perm.trade_mode}' for user {telegram_id}")
+            logger.error("[AutoTradeEngine] BLOCKED — unknown trade_mode '%s' for user %s", perm.trade_mode, telegram_id)
             return {
                 "executed": False,
                 "reason": f"Unknown trade_mode '{perm.trade_mode}'. Trade blocked for safety.",
@@ -182,7 +182,7 @@ class AutoTradeEngine:
                 db.add(pending)
                 db.commit()
                 db.refresh(pending)
-            print(f"[AutoTradeEngine] CONFIRM mode — PendingTrade id={pending.id} created")
+            logger.info("[AutoTradeEngine] CONFIRM mode — PendingTrade id=%s created", pending.id)
             return {
                 "executed": False,
                 "reason": (
@@ -221,7 +221,7 @@ class AutoTradeEngine:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(endpoint, json=trade_payload, headers=headers)
                 resp.raise_for_status()
-                print(f"[AutoTradeEngine] Trade executed via {endpoint}: {resp.json()}")
+                logger.info("[AutoTradeEngine] Trade executed via %s: %s", endpoint, resp.json())
                 return {
                     "executed": True,
                     "reason":   f"Trade executed: {outcome} on {market_id} for ${safe_amount} USDC",
@@ -233,9 +233,9 @@ class AutoTradeEngine:
             # Idempotency: 409 Conflict = already executed, NOT an error
             if e.response.status_code == 409:
                 return {"executed": False, "reason": "Trade already executed (idempotency check).", "mode": "duplicate"}
-            print(f"[AutoTradeEngine] HTTP error {e.response.status_code}: {e.response.text}")
+            logger.error("[AutoTradeEngine] HTTP error %d: %s", e.response.status_code, e.response.text[:200])
             return {"executed": False, "reason": f"Execution backend error: {e.response.status_code}", "mode": "error"}
 
         except Exception as e:
-            print(f"[AutoTradeEngine] Unexpected error: {e}")
+            logger.error("[AutoTradeEngine] Unexpected error: %s", e)
             return {"executed": False, "reason": str(e), "mode": "error"}

@@ -8,7 +8,7 @@ Checks:
   1. advice_flow      — POST /agent/advice returns required fields
   2. policy_block     — injection string returns HTTP 400
   3. autotrade_paper  — POST /papertrade creates a record
-  4. rate_limit       — 6th call in same session returns 429
+  4. rate_limit       — 11th call in same session returns 429  (limit = 10)
   5. kiswahili        — language=sw returns translated plan
 """
 
@@ -30,7 +30,7 @@ async def _check_advice_flow(client: httpx.AsyncClient) -> dict:
     t = time.monotonic()
     try:
         r = await client.post(f"{BASE}/agent/advice", json={
-            "market_id": TEST_MARKET, "telegram_id": TEST_USER + "-flow"
+            "market_id": TEST_MARKET, "user_id": TEST_USER + "-flow"
         }, timeout=60)
         ms = int((time.monotonic() - t) * 1000)
         if r.status_code != 200:
@@ -55,7 +55,7 @@ async def _check_policy_block(client: httpx.AsyncClient) -> dict:
     try:
         for inj in injections:
             r = await client.post(f"{BASE}/agent/advice", json={
-                "market_id": inj, "telegram_id": TEST_USER + "-policy"
+                "market_id": inj, "user_id": TEST_USER + "-policy"
             }, timeout=15)
             ms = int((time.monotonic() - t) * 1000)
             if r.status_code == 400:
@@ -96,16 +96,17 @@ async def _check_rate_limit(client: httpx.AsyncClient) -> dict:
     rl_user = TEST_USER + f"-ratelimit-{int(time.time())}"
     last_status = None
     try:
-        for i in range(6):
+        # Loop 11 times — limit is 10, so the 11th call must return HTTP 429.
+        for i in range(11):
             r = await client.post(f"{BASE}/agent/advice", json={
-                "market_id": TEST_MARKET, "telegram_id": rl_user
+                "market_id": TEST_MARKET, "user_id": rl_user
             }, timeout=60)
             last_status = r.status_code
             if r.status_code == 429:
                 ms = int((time.monotonic() - t) * 1000)
                 return _result("rate_limit", True, f"HTTP 429 on call {i+1}", ms)
         ms = int((time.monotonic() - t) * 1000)
-        return _result("rate_limit", False, f"Never got 429 — last status was {last_status}", ms)
+        return _result("rate_limit", False, f"Never got 429 after 11 calls — last status was {last_status}", ms)
     except Exception as e:
         return _result("rate_limit", False, str(e), int((time.monotonic() - t) * 1000))
 
@@ -135,7 +136,7 @@ async def _check_kiswahili(client: httpx.AsyncClient) -> dict:
 async def run_tests():
     """
     Runs all 5 integration checks and returns a JSON report.
-    Tests run sequentially — rate_limit test is last as it makes 6 advice calls.
+    Tests run sequentially — rate_limit test is last as it makes 11 advice calls.
 
     Returns:
         {
@@ -154,7 +155,7 @@ async def run_tests():
         results.append(await _check_autotrade_paper(client))
         results.append(await _check_kiswahili(client))
 
-        # Test 4 last — makes 6 advice calls which burns rate limit quota
+        # Test 4 last — makes 11 advice calls which burns rate limit quota
         results.append(await _check_rate_limit(client))
 
     passed = sum(1 for r in results if r["passed"])
