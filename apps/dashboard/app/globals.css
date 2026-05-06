@@ -666,7 +666,6 @@ body::after {
   background: var(--teal);
   border-color: var(--teal);
   color: #020e1a;
-  box-shadow: 0 0 24px rgba(45, 212, 191, 0.3);
 }
 .side-btn.active-no {
   background: var(--glass-hover);
@@ -963,6 +962,43 @@ body::after {
   background: var(--glass-bg);
 }
 .empty-text { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); letter-spacing: 0.3px; }
+
+/* ═══════════════════════════════════════════
+   market-p: RESOLVED BANNER + LIVE MARKET BTN
+   Shown on market detail page when a market has resolved (odds at extremes).
+   Live market button only rendered for crypto markets when a related one exists.
+   ═══════════════════════════════════════════ */
+.mp-resolved-banner {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 12px; margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(132, 130, 130, 0.3);
+  border-radius: var(--rsm);
+  backdrop-filter: blur(8px);
+}
+.mp-resolved-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #848282;
+  display: inline-block; flex-shrink: 0;
+}
+/* market-p: "Go to Live Market" pill button */
+.mp-live-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 16px; border-radius: 100px;
+  border: 1px solid var(--teal-border);
+  background: var(--teal-dim);
+  color: var(--teal);
+  font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.3px; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.mp-live-btn:hover {
+  background: var(--teal);
+  color: #000;
+  box-shadow: 0 0 16px var(--teal-glow);
+}
+/* ─── end market-p ─────────────────────────────────────────────────────────── */
 
 /* ═══════════════════════════════════════════
    P-GLOBAL CHAT: Floating chat FAB + panel
@@ -2086,4 +2122,15 @@ nav button.nav-link:hover {
   background: #0a0a0a !important;
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* ── market detail left/right columns ── */
+.m-left-col  { display: flex; flex-direction: column; }
+.m-right-col { display: flex; flex-direction: column; }
+
+/* m-chip active state for interval tabs */
+.m-chip.on {
+  background: rgba(52,192,127,0.12);
+  border-color: rgba(52,192,127,0.5) !important;
+  color: #34C07F !important;
 }

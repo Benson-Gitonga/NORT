@@ -5,41 +5,36 @@ import { useTelegram } from '@/hooks/useTelegram';
 import { useTradingMode } from '@/components/TradingModeContext';
 import Header from '@/components/Header';
 import Navbar from '@/components/Navbar';
-import AuthGate from '@/components/AuthGate';
 import Link from 'next/link';
+import AuthGate from '@/components/AuthGate';
 import { useTier } from '@/hooks/useTier';
 import PremiumGate from '@/components/PremiumGate';
-import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE, getPermissions, setPermissions } from '@/lib/api';
+import { getFullWallet, getTrades, getUserStats, getBridgeHistory, getPretiumTransactions, BASE, authFetch } from '@/lib/api';
 
 export default function ProfilePage() {
-  const { user, walletAddress, logout } = useAuth();
+  const { user, walletAddress, logout, isLoggingOut } = useAuth();
   const { haptic } = useTelegram();
   const { mode } = useTradingMode();
   const { tier } = useTier();
   const isReal = mode === 'real';
 
-  const [wallet, setWallet] = useState(null);
-  const [trades, setTrades] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [bridges, setBridges] = useState([]);
-  const [pretiumTxs, setPretiumTxs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [wallet, setWallet]         = useState(null);
+  const [trades, setTrades]         = useState([]);
+  const [stats, setStats]           = useState(null);
+  const [bridges, setBridges]       = useState([]);
+  const [pretiumTxs, setPretiumTxs]  = useState([]);
+  const [loading, setLoading]       = useState(true);
 
-  // Auto-trade permissions state
-  const [perms, setPerms] = useState(null);
-  const [permsLoading, setPermsLoading] = useState(false);
-  const [permsSaving, setPermsSaving] = useState(false);
-
-  const [dbUsername, setDbUsername] = useState('');
+  const [dbUsername, setDbUsername]   = useState('');
   const [editingName, setEditingName] = useState(false);
   const [newUsername, setNewUsername] = useState('');
-  const [savingName, setSavingName] = useState(false);
-  const [saveError, setSaveError] = useState('');
+  const [savingName, setSavingName]   = useState(false);
+  const [saveError, setSaveError]     = useState('');
   const [showPremiumGate, setShowPremiumGate] = useState(false);
 
   useEffect(() => {
     if (!walletAddress) return;
-    fetch(`${BASE}/api/wallet/connect`, {
+    authFetch(`${BASE}/api/wallet/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wallet_address: walletAddress.toLowerCase() }),
@@ -48,78 +43,67 @@ export default function ProfilePage() {
       .then(data => {
         if (data?.username) {
           setDbUsername(data.username);
-          try { window.localStorage.setItem('nort_username', data.username); } catch { }
+          try { window.localStorage.setItem('nort_username', data.username); } catch {}
         }
       })
-      .catch(() => { });
+      .catch(() => {});
   }, [walletAddress]);
 
-  useEffect(() => {
-    Promise.all([getFullWallet(), getTrades(), getUserStats(), getBridgeHistory(), getPretiumTransactions(null, 5)])
-      .then(([w, t, s, b, f]) => {
-        setWallet(w);
-        setTrades(t);
-        setStats(s);
-        setBridges(b.bridges || []);
-        setPretiumTxs(f.transactions || []);
-      })
-      .catch(console.warn)
-      .finally(() => setLoading(false));
-  }, []);
-
-  // Load auto-trade permissions
   useEffect(() => {
     if (!walletAddress) return;
-    setPermsLoading(true);
-    getPermissions()
-      .then(p => setPerms(p || { auto_trade_enabled: false, trade_mode: 'paper', max_bet_size: 10, min_confidence: 0.75 }))
-      .catch(() => setPerms({ auto_trade_enabled: false, trade_mode: 'paper', max_bet_size: 10, min_confidence: 0.75 }))
-      .finally(() => setPermsLoading(false));
-  }, [walletAddress]);
 
-  const savePerms = async (patch) => {
-    const updated = { ...perms, ...patch };
-    setPerms(updated);
-    setPermsSaving(true);
-    try { await setPermissions(patch); }
-    catch (e) { console.warn('Perms save failed:', e); }
-    finally { setPermsSaving(false); }
-  };
+    // Load sequentially rather than Promise.all to prevent flooding the backend authentication rate limits (429 -> 401 proxy issue)
+    const loadData = async () => {
+      try {
+        const w = await getFullWallet(); setWallet(w);
+        const t = await getTrades(); setTrades(t);
+        const s = await getUserStats(); setStats(s);
+        const b = await getBridgeHistory(); setBridges(b.bridges || []);
+        const f = await getPretiumTransactions(null, 5); setPretiumTxs(f.transactions || []);
+      } catch (err) {
+        console.warn('Profile sync error:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [walletAddress]);
 
   const saveUsername = async () => {
     if (!newUsername.trim() || !walletAddress) return;
     setSavingName(true); setSaveError('');
     try {
-      await fetch(`${BASE}/api/wallet/connect`, {
+      await authFetch(`${BASE}/api/wallet/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet_address: walletAddress.toLowerCase(), username: newUsername.trim() }),
       });
       setDbUsername(newUsername.trim());
-      try { window.localStorage.setItem('nort_username', newUsername.trim()); } catch { }
+      try { window.localStorage.setItem('nort_username', newUsername.trim()); } catch {}
       setEditingName(false);
     } catch { setSaveError('Could not save. Try again.'); }
     finally { setSavingName(false); }
   };
 
   const displayName = dbUsername || user?.firstName || user?.name || 'Trader';
-  const initials = displayName.length >= 2 ? displayName.slice(0, 2).toUpperCase() : 'TR';
-  const isNewUser = !dbUsername && !user?.firstName && !user?.name;
+  const initials    = displayName.length >= 2 ? displayName.slice(0, 2).toUpperCase() : 'TR';
+  const isNewUser   = !dbUsername && !user?.firstName && !user?.name;
 
   // Use the right trade list based on mode
-  const activeTrades = trades.filter(t => t.status === 'open');
-  const closedTrades = trades.filter(t => t.status === 'closed');
-  const wins = closedTrades.filter(t => (t.pnl || 0) > 0);
-  const losses = closedTrades.filter(t => (t.pnl || 0) < 0);
-  const winRate = closedTrades.length > 0 ? Math.round((wins.length / closedTrades.length) * 100) : 0;
-  const totalPnl = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+  const activeTrades   = trades.filter(t => t.status === 'open');
+  const closedTrades   = trades.filter(t => t.status === 'closed');
+  const wins           = closedTrades.filter(t => (t.pnl || 0) > 0);
+  const losses         = closedTrades.filter(t => (t.pnl || 0) < 0);
+  const winRate        = closedTrades.length > 0 ? Math.round((wins.length / closedTrades.length) * 100) : 0;
+  const totalPnl       = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
 
   // Balance to display depends on mode
   const displayBalance = isReal
     ? (wallet?.realBalanceUsdc ?? 0)
     : (wallet?.paperBalance ?? 0);
 
-  const fmt = n => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
+  const fmt      = n => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
   const pnlColor = n => n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'inherit';
   const bridgeStatusColor = s => ({ done: 'var(--green)', failed: 'var(--red)', bridging: 'var(--teal)', pending: 'var(--muted)' }[s] || 'var(--muted)');
 
@@ -159,14 +143,15 @@ export default function ProfilePage() {
             )}
           </div>
 
-          {/* ── Tier Card ── */}
           <div className="fu d2" style={{
             margin: '0 0 4px',
             padding: '10px 14px',
             background: tier === 'premium' ? 'rgba(245,158,11,0.08)' : 'var(--card)',
             borderRadius: 'var(--r)',
             border: `1px solid ${tier === 'premium' ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
-            display: 'inline-flex', alignItems: 'center', gap: 12,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 12,
           }}>
             <div>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>AI Advice Tier</div>
@@ -174,17 +159,15 @@ export default function ProfilePage() {
                 {tier === 'premium' ? 'Premium' : 'Free'}
               </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              {tier === 'free' && (
-                <button
-                  className="chip-btn"
-                  style={{ borderColor: 'rgba(245,158,11,0.35)', color: '#F59E0B' }}
-                  onClick={() => setShowPremiumGate(true)}
-                >
-                  Upgrade to Premium
-                </button>
-              )}
-            </div>
+            {tier === 'free' && (
+              <button
+                className="chip-btn"
+                style={{ borderColor: 'rgba(245,158,11,0.35)', color: '#F59E0B' }}
+                onClick={() => setShowPremiumGate(true)}
+              >
+                Upgrade to Premium
+              </button>
+            )}
           </div>
 
           <PremiumGate
@@ -278,11 +261,11 @@ export default function ProfilePage() {
             <>
               <div className="sec-lbl fu d6"><span className="sec-t">Open Positions</span><span className="sec-t">{activeTrades.length} active</span></div>
               {activeTrades.map((t, i) => (
-                <div key={t.id} className={`trade-item fu d${Math.min(i + 1, 6)}`}>
+                <div key={t.id} className={`trade-item fu d${Math.min(i+1,6)}`}>
                   <div className={`trade-side-badge ${t.side}`}>{t.side.toUpperCase()}</div>
                   <div className="trade-info">
                     <div className="trade-q">{t.q}</div>
-                    <div className="trade-meta">${t.amount} · {(t.price * 100).toFixed(0)}¢ entry</div>
+                    <div className="trade-meta">${t.amount} · {(t.price*100).toFixed(0)}¢ entry</div>
                   </div>
                   <div className="trade-pnl" style={{ color: pnlColor(t.pnl) }}>{t.pnl ? fmt(t.pnl) : '—'}</div>
                 </div>
@@ -302,42 +285,24 @@ export default function ProfilePage() {
           ) : (
             <div style={{ paddingBottom: 8 }}>
               {closedTrades.map((t, i) => (
-                <div key={t.id} className={`trade-item fu d${Math.min(i + 1, 6)}`}>
+                <div key={t.id} className={`trade-item fu d${Math.min(i+1,6)}`}>
                   <div className={`trade-side-badge ${t.side}`}>{t.side.toUpperCase()}</div>
                   <div className="trade-info">
                     <div className="trade-q">{t.q}</div>
-                    <div className="trade-meta">${t.amount} · {(t.price * 100).toFixed(0)}¢ · closed</div>
+                    <div className="trade-meta">${t.amount} · {(t.price*100).toFixed(0)}¢ · closed</div>
                   </div>
-                  <div className="trade-pnl" style={{ color: pnlColor(t.pnl || 0) }}>{fmt(t.pnl || 0)}</div>
+                  <div className="trade-pnl" style={{ color: pnlColor(t.pnl||0) }}>{fmt(t.pnl||0)}</div>
                 </div>
               ))}
             </div>
           )}
-
-          {/* ── Auto-Trade — Coming Soon ── */}
-          <div className="sec-lbl fu d7"><span className="sec-t">Auto-Trade</span></div>
-          <div className="settings-group fu d8">
-            <div className="settings-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '14px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--white)' }}>Automated Trading</span>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-                  background: 'rgba(100,116,139,0.2)', border: '1px solid rgba(100,116,139,0.3)',
-                  color: 'var(--muted)', fontFamily: 'DM Mono, monospace', letterSpacing: '0.06em',
-                }}>COMING SOON</span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-                Let NORT automatically execute trades based on AI confidence scores. Available in v3.
-              </div>
-            </div>
-          </div>
 
           {/* ── Wallet ── */}
           <div className="sec-lbl fu d7"><span className="sec-t">Wallet</span></div>
           <div className="settings-group fu d8">
             <div className="settings-item">
               <div className="settings-label">Address</div>
-              <div className="settings-value mono">{walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : 'Not connected'}</div>
+              <div className="settings-value mono">{walletAddress ? `${walletAddress.slice(0,6)}...${walletAddress.slice(-4)}` : 'Not connected'}</div>
             </div>
             <div className="settings-item">
               <div className="settings-label">Mode</div>
@@ -384,7 +349,7 @@ export default function ProfilePage() {
                       </div>
                     </div>
                     <div className="settings-value" style={{
-                      color: tx.status === 'completed' ? 'var(--green)' : ['failed', 'expired'].includes(tx.status) ? 'var(--red)' : '#F59E0B',
+                      color: tx.status === 'completed' ? 'var(--green)' : ['failed','expired'].includes(tx.status) ? 'var(--red)' : '#F59E0B',
                       fontFamily: 'DM Mono,monospace', fontSize: 11,
                     }}>
                       {tx.status.toUpperCase()}
@@ -395,10 +360,11 @@ export default function ProfilePage() {
             </>
           )}
 
-          {/* ── Logout ── */}
           <div className="settings-group fu d9" style={{ marginTop: 8 }}>
-            <button className="settings-btn danger" onClick={() => { haptic?.medium?.(); logout(); }}
-              style={{ width: '100%', padding: '16px', fontSize: '14px' }}>Log Out</button>
+            <button className="settings-btn danger" disabled={isLoggingOut} onClick={() => { haptic?.medium?.(); logout(); }}
+              style={{ width: '100%', padding: '16px', fontSize: '14px', opacity: isLoggingOut ? 0.7 : 1 }}>
+              {isLoggingOut ? 'Logging Out...' : 'Log Out'}
+            </button>
           </div>
 
           <div className="profile-disclaimer fu d10">

@@ -76,8 +76,9 @@ export default function TradeModal({ signal, initialSide = 'yes', onClose, onSuc
   };
 
   return (
+    // market-p: modal background changed from blue-tint to pure black to match NORT dark theme
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ background: 'rgba(10,10,10,0.97)' }}>
         <div className="modal-handle" />
 
         <div className="modal-title">Paper Trade</div>

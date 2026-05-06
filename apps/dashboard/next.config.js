@@ -16,6 +16,19 @@ const nextConfig = {
     },
   },
 
+  async headers() {
+    return [
+      {
+        // Allow the Base app and Farcaster to read the manifest
+        source: '/.well-known/farcaster.json',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Content-Type', value: 'application/json' },
+        ],
+      },
+    ];
+  },
+
   async rewrites() {
     // In development, serve everything locally.
     // Only proxy landing assets to Vercel in production.

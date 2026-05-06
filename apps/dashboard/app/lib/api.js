@@ -1,32 +1,179 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// lib/api.js — NORT Dashboard API layer
-// All data comes from the FastAPI backend (Neon PostgreSQL on Render).
-// NEXT_PUBLIC_API_URL must be set on Vercel to point at the backend.
+// lib/api.js — NORT API layer
+//
+// FIX: getAccessToken does NOT exist as a standalone Privy import.
+// It only exists on the usePrivy() hook return value.
+// We use TokenStore (populated by PrivyProvidersInner on mount) to access it.
+//
+// FIX: Backend get_current_user also needs X-Wallet-Address because
+// Privy access tokens do not embed wallet addresses in their payload.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getAccessToken } from '@privy-io/react-auth';
+import { TokenStore } from './tokenStore';
 
 export const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-
-async function authFetch(endpoint, options = {}) {
-  const headers = new Headers(options.headers || {});
-
-  // Only attempt to get token client-side
+// ─── SESSION EXPIRED EVENT ───────────────────────────────────────────────────
+function dispatchSessionExpired() {
   if (typeof window !== 'undefined') {
-    try {
-      const token = await getAccessToken();
-      if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
-      }
-    } catch (e) {
-      console.warn("Could not retrieve Privy token", e);
+    window.dispatchEvent(new CustomEvent('session_expired'));
+  }
+}
+
+// ─── TOKEN FETCHER ────────────────────────────────────────────────────────────
+async function getToken() {
+  if (typeof window === 'undefined') return null;
+
+  const getAccessToken = TokenStore.get();
+  if (!getAccessToken) {
+    // Privy not ready yet — wait up to 2s
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      const fn = TokenStore.get();
+      if (fn) return fn().catch(() => null);
     }
+    return null;
   }
 
-  return fetch(endpoint, { ...options, headers });
+  return getAccessToken().catch(() => null);
 }
+
+const getStoredWallet = () => {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage.getItem('walletAddress'); }
+  catch { return null; }
+};
+
+const AUTH_STATE_EVENT = 'nort_auth_state';
+const SESSION_EXPIRED_EVENT = 'session_expired';
+const TOKEN_POLL_ATTEMPTS = 6;
+const TOKEN_POLL_DELAY_MS = 200;
+const AUTH_READY_TIMEOUT_MS = 4000;
+
+let accessTokenCache = null;
+let accessTokenCachedAt = 0;
+let sessionExpiredNotified = false;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isValidToken = (token) =>
+  !!token && token !== 'null' && token !== 'undefined' && token.split('.').length === 3;
+
+const buildUnauthorizedResponse = (detail = 'Unauthorized') =>
+  new Response(JSON.stringify({ detail }), {
+    status: 401,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+const getAuthState = () => {
+  if (typeof window === 'undefined') return { ready: false, isAuthed: false };
+  return window.__NORT_AUTH_STATE || { ready: false, isAuthed: false };
+};
+
+const notifySessionExpired = (reason, endpoint, status = 401) => {
+  if (typeof window === 'undefined' || sessionExpiredNotified) return;
+  sessionExpiredNotified = true;
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, {
+    detail: { reason, endpoint, status, at: Date.now() },
+  }));
+};
+
+const waitForAuthReady = async (timeoutMs = AUTH_READY_TIMEOUT_MS) => {
+  if (typeof window === 'undefined') return { ready: false, isAuthed: false };
+  const current = getAuthState();
+  if (current.ready) return current;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener(AUTH_STATE_EVENT, onAuthState);
+      clearTimeout(timer);
+      resolve(state || getAuthState());
+    };
+    const onAuthState = (event) => {
+      const detail = event?.detail || getAuthState();
+      if (detail.ready) finish(detail);
+    };
+    const timer = setTimeout(() => finish(getAuthState()), timeoutMs);
+    window.addEventListener(AUTH_STATE_EVENT, onAuthState);
+  });
+};
+
+const resolveAccessToken = async () => {
+  const now = Date.now();
+  if (isValidToken(accessTokenCache) && (now - accessTokenCachedAt) < 30_000) {
+    return accessTokenCache;
+  }
+
+  for (let i = 0; i < TOKEN_POLL_ATTEMPTS; i += 1) {
+    try {
+      const token = await getToken();
+      if (isValidToken(token)) {
+        accessTokenCache = token;
+        accessTokenCachedAt = Date.now();
+        sessionExpiredNotified = false;
+        return token;
+      }
+    } catch {}
+    await sleep(TOKEN_POLL_DELAY_MS);
+  }
+
+  accessTokenCache = null;
+  accessTokenCachedAt = 0;
+  return null;
+};
+
+export async function authFetch(endpoint, options = {}) {
+  const {
+    requireAuth = true,
+    ...requestOptions
+  } = options;
+  const headers = new Headers(requestOptions.headers || {});
+  const walletAddress = getStoredWallet();
+
+  if (walletAddress) {
+    headers.set('X-Wallet-Address', walletAddress.toLowerCase());
+  }
+
+  if (typeof window === 'undefined') {
+    return fetch(endpoint, { ...requestOptions, headers });
+  }
+
+  if (requireAuth) {
+    const authState = await waitForAuthReady();
+    if (!authState.ready || !authState.isAuthed) {
+      notifySessionExpired('auth_not_ready_or_not_authed', endpoint, 401);
+      return buildUnauthorizedResponse('Authentication required');
+    }
+
+    const token = await resolveAccessToken();
+    if (!token) {
+      notifySessionExpired('missing_privy_access_token', endpoint, 401);
+      return buildUnauthorizedResponse('Missing Privy access token');
+    }
+
+    headers.set('Authorization', `Bearer ${token}`);
+    window.__NORT_LAST_ACCESS_TOKEN = token;
+  } else {
+    try {
+      const optionalToken = await getToken();
+      if (isValidToken(optionalToken)) headers.set('Authorization', `Bearer ${optionalToken}`);
+    } catch {}
+  }
+
+  const res = await fetch(endpoint, { ...requestOptions, headers });
+  if (requireAuth && res.status === 401) {
+    accessTokenCache = null;
+    accessTokenCachedAt = 0;
+    notifySessionExpired('backend_rejected_token', endpoint, 401);
+  }
+
+  return res;
+}
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 const abbr = (n) => {
   if (n == null) return '—';
@@ -37,26 +184,18 @@ const abbr = (n) => {
   return String(Math.round(n));
 };
 
-const getStoredWallet = () => {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage.getItem('walletAddress'); }
-  catch { return null; }
-};
-
 // ─── SIGNALS ─────────────────────────────────────────────────────────────────
 
 export async function getSignals(filter = 'all', category = 'crypto') {
-  // category: 'crypto' | 'sports' | 'all'
   const categoryParam = category !== 'all' ? `&category=${category}` : '';
-  const sigRes = await authFetch(`${BASE}/signals/?top=50${categoryParam}`);
+  const sigRes = await authFetch(`${BASE}/signals/?top=50${categoryParam}`, { requireAuth: false });
   if (!sigRes.ok) throw new Error(`Failed to load signals`);
 
   const sigData = await sigRes.json();
   const rawSignals = Array.isArray(sigData) ? sigData : (sigData.signals || []);
 
-  // Sport categories
-  const SPORT_CATS = new Set(['NBA', 'NHL', 'Soccer', 'EPL', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1', 'UCL', 'MLB', 'Tennis', 'Golf', 'Sports']);
-  const CRYPTO_CATS = new Set(['BTC', 'ETH', 'SOL', 'XRP', 'HYPE', 'Crypto']);
+  const SPORT_CATS  = new Set(['NBA','NHL','Soccer','EPL','La Liga','Serie A','Bundesliga','Ligue 1','UCL','MLB','Tennis','Golf','Sports']);
+  const CRYPTO_CATS = new Set(['BTC','ETH','SOL','XRP','HYPE','Crypto']);
 
   const signals = rawSignals
     .filter(s => {
@@ -66,55 +205,68 @@ export async function getSignals(filter = 'all', category = 'crypto') {
     })
     .map(s => {
       const heatPct = Math.max(0, Math.min(100, Math.round((s.score || 0) * 100)));
-      const status = heatPct >= 80 ? 'hot' : heatPct >= 50 ? 'warm' : 'cool';
-      const rawOdds = s.current_odds ?? 0.5;
-      const yesInt = Math.max(1, Math.min(99, Math.round(rawOdds * 100)));
-
+      const status  = heatPct >= 80 ? 'hot' : heatPct >= 50 ? 'warm' : 'cool';
+      const yesInt  = Math.max(1, Math.min(99, Math.round((s.current_odds ?? 0.5) * 100)));
       return {
-        id: s.market_id,
-        cat: s.category || 'Crypto',
-        heat: `${heatPct}° ${status.toUpperCase()}`,
+        id:     s.market_id,
+        cat:    s.category || 'Crypto',
+        heat:   `${heatPct}° ${status.toUpperCase()}`,
         status,
-        q: s.question || s.reason || 'Unknown market',
-        yes: yesInt,
-        vol: abbr(s.volume || 0),
+        q:      s.question || s.reason || 'Unknown market',
+        yes:    yesInt,
+        vol:    abbr(s.volume || 0),
         locked: (s.score || 0) >= 0.7,
         advice: s.reason || '',
       };
     });
 
-  if (filter === 'all') return signals;
-  return signals.filter(s => s.status === filter);
+  return filter === 'all' ? signals : signals.filter(s => s.status === filter);
 }
 
 // ─── MARKETS ─────────────────────────────────────────────────────────────────
 
 export async function getMarket(id) {
-  const res = await authFetch(`${BASE}/markets/${id}`);
+  const res = await authFetch(`${BASE}/markets/${id}`, { requireAuth: false });
   if (!res.ok) throw new Error(`Market ${id} not found`);
   const m = await res.json();
   return {
-    id: m.id,
-    q: m.question,
-    cat: m.category,
-    yes: Math.max(1, Math.min(99, Math.round((m.current_odds || 0.5) * 100))),
-    vol: abbr(m.volume || 0),
+    id:     m.id,
+    q:      m.question,
+    cat:    m.category,
+    yes:    Math.max(1, Math.min(99, Math.round((m.current_odds || 0.5) * 100))),
+    vol:    abbr(m.volume || 0),
     status: 'info',
     advice: '',
     locked: false,
   };
 }
 
+// market-p: Fetches real YES price history for a market from the backend,
+// which in turn calls Polymarket's CLOB API. Returns a plain number array
+// (values 0-100) ready to pass directly into SVGLineChart's data prop.
+// Falls back to empty array — page.jsx handles the placeholder fallback.
+export async function getMarketPriceHistory(id, interval = '1w') {
+  try {
+    const res = await authFetch(`${BASE}/markets/${id}/price-history?interval=${interval}`, { requireAuth: false }); // market-p3: public history fetch
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.prices || []; // market-p: flat number array e.g. [48.2, 51.0, 55.3, ...]
+  } catch {
+    return []; // market-p: silent fail — chart will use placeholder data
+  }
+}
+// ─── end market-p ─────────────────────────────────────────────────────────────
+
 export async function listMarkets() {
-  const res = await authFetch(`${BASE}/markets/?limit=500`);
+  const res = await authFetch(`${BASE}/markets/?limit=500`, { requireAuth: false });
   if (!res.ok) throw new Error(`Markets authFetch failed: ${res.status}`);
   const data = await res.json();
   return (data.markets || []).map(m => ({
-    id: m.id,
-    q: m.question,
-    cat: m.category,
-    yes: Math.max(1, Math.min(99, Math.round((m.current_odds || 0.5) * 100))),
-    vol: abbr(m.volume || 0),
+    id:     m.id,
+    q:      m.question,
+    cat:    m.category,
+    yes:    Math.max(1, Math.min(99, Math.round((m.current_odds || 0.5) * 100))),
+    vol:    abbr(m.volume || 0),
     status: 'info',
     advice: '',
     locked: false,
@@ -122,7 +274,7 @@ export async function listMarkets() {
 }
 
 export async function refreshMarkets() {
-  const res = await authFetch(`${BASE}/markets/refresh`);
+  const res = await authFetch(`${BASE}/markets/refresh`, { requireAuth: false });
   if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
   return await res.json();
 }
@@ -131,11 +283,11 @@ export async function refreshMarkets() {
 
 export async function getAdvice(marketId, userMessage = null, language = null) {
   const wallet = getStoredWallet();
-  // Detect Swahili from browser locale if caller doesn't specify a language
-  const lang = language || ((typeof navigator !== 'undefined' && navigator.language || 'en').startsWith('sw') ? 'sw' : 'en');
+  const lang = language || ((typeof navigator !== 'undefined' && (navigator.language || 'en').startsWith('sw')) ? 'sw' : 'en');
   const res = await authFetch(`${BASE}/agent/advice`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    requireAuth: false,
     body: JSON.stringify({
       market_id: String(marketId),
       user_id: wallet || null,
@@ -159,7 +311,7 @@ export async function getAdvice(marketId, userMessage = null, language = null) {
 
 export async function getPremiumAdvice(marketId, userMessage = null, language = null) {
   const wallet = getStoredWallet();
-  const lang = language || ((typeof navigator !== 'undefined' && navigator.language || 'en').startsWith('sw') ? 'sw' : 'en');
+  const lang = language || ((typeof navigator !== 'undefined' && (navigator.language || 'en').startsWith('sw')) ? 'sw' : 'en');
   const res = await authFetch(`${BASE}/agent/advice`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -186,90 +338,35 @@ export async function getPremiumAdvice(marketId, userMessage = null, language = 
   };
 }
 
-
 // ─── PAPER TRADE ─────────────────────────────────────────────────────────────
 
 export async function paperTrade({ marketId, side, amount, price, question: providedQuestion }) {
   const wallet = getStoredWallet();
-
-  // Use the question passed in directly — it comes from the signal card the user tapped,
-  // so it's guaranteed correct. Only fall back to a DB authFetch if nothing was provided.
   let question = providedQuestion || '';
-  if (!question) {
-    try {
-      const m = await getMarket(String(marketId));
-      question = m?.q || '';
-    } catch { }
-  }
+  if (!question) { try { const m = await getMarket(String(marketId)); question = m?.q || ''; } catch {} }
 
-  // Ensure the user/wallet exists in DB before trading
   const userId = (wallet || 'dev_user').toLowerCase();
   try {
     await authFetch(`${BASE}/api/wallet/connect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // Don't set telegram_id here — it has a UNIQUE constraint and
-      // the wallet address is not a real Telegram ID.
-      // The wallet_address itself is used as the trading key.
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wallet_address: userId }),
     });
-  } catch { }
+  } catch {}
 
-  // price_per_share must be between 0 and 1 (e.g. 0.55 for 55¢)
-  // price coming in may be a percentage (55) or already decimal (0.55)
   const rawPrice = parseFloat(price);
   let normalizedPrice = rawPrice > 1 ? rawPrice / 100 : rawPrice;
-  // Clamp to valid range — backend requires strictly between 0 and 1
   normalizedPrice = Math.min(0.99, Math.max(0.01, normalizedPrice));
-  // shares = amount / price_per_share, minimum 1, capped to 1 decimal
   const rawAmount = parseFloat(amount);
   if (!rawAmount || rawAmount <= 0) throw new Error('Amount must be greater than 0');
-  const computedShares = rawAmount / normalizedPrice;
-  const shares = Math.max(1, Math.round(computedShares * 10) / 10);
-  // total_cost guard: backend requires >= $1
+  const shares = Math.max(1, Math.round((rawAmount / normalizedPrice) * 10) / 10);
   const totalCost = Math.round(shares * normalizedPrice * 100) / 100;
-  if (totalCost < 1.0) {
-    throw new Error('Minimum trade value is $1.00');
-  }
+  if (totalCost < 1.0) throw new Error('Minimum trade value is $1.00');
 
-  const body = {
-    telegram_user_id: userId,
-    market_id: String(marketId),
-    market_question: question || `Market ${marketId}`,
-    outcome: (side || '').toUpperCase() === 'NO' ? 'NO' : 'YES',
-    shares,
-    price_per_share: normalizedPrice,
-    direction: 'BUY',
-  };
-
-  const res = await authFetch(`${BASE}/api/papertrade`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const errJson = await res.json();
-      // FastAPI 422 puts the Pydantic errors in errJson.detail
-      detail = JSON.stringify(errJson.detail ?? errJson);
-    } catch { }
-    console.error('[paperTrade] 422 body sent:', body);
-    console.error('[paperTrade] error detail:', detail);
-    throw new Error(`Trade failed (${res.status}): ${detail}`);
-  }
+  const body = { telegram_user_id: userId, market_id: String(marketId), market_question: question || `Market ${marketId}`, outcome: (side || '').toUpperCase() === 'NO' ? 'NO' : 'YES', shares, price_per_share: normalizedPrice, direction: 'BUY' };
+  const res = await authFetch(`${BASE}/api/papertrade`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { let d = ''; try { d = JSON.stringify((await res.json()).detail ?? {}); } catch {} throw new Error(`Trade failed (${res.status}): ${d}`); }
   const r = await res.json();
-  return {
-    id: r.trade_id ?? `t${Date.now()}`,
-    marketId,
-    side,
-    amount,
-    price,
-    pnl: 0,
-    status: 'open',
-    ts: Date.now(),
-    txHash: r.tx_hash || null,
-  };
+  return { id: r.trade_id ?? `t${Date.now()}`, marketId, side, amount, price, pnl: 0, status: 'open', ts: Date.now(), txHash: r.tx_hash || null };
 }
 
 // ─── WALLET ──────────────────────────────────────────────────────────────────
@@ -277,69 +374,40 @@ export async function paperTrade({ marketId, side, amount, price, question: prov
 export async function getWallet() {
   const wallet = getStoredWallet();
   if (!wallet) return { balance: 0, pnl: 0, pnlPct: 0, trades: 0, wins: 0, losses: 0, winRate: 0, tradingMode: 'paper' };
-
   const res = await authFetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
   if (!res.ok) throw new Error(`Wallet authFetch failed: ${res.status}`);
   const w = await res.json();
-
-  // Use the right balance based on mode
   const isReal = w.trading_mode === 'real';
-  return {
-    balance: (isReal ? w.real_balance_usdc : w.paper_balance) ?? 0,
-    pnl: w.net_pnl ?? 0,
-    pnlPct: w.net_pnl_pct ?? 0,
-    trades: w.total_trades ?? 0,
-    wins: w.wins ?? 0,
-    losses: w.losses ?? 0,
-    winRate: w.win_rate_pct ?? 0,
-    tradingMode: w.trading_mode ?? 'paper',
-    // keep both balances available
-    paperBalance: w.paper_balance ?? 0,
-    realBalanceUsdc: w.real_balance_usdc ?? 0,
-  };
+  return { balance: (isReal ? w.real_balance_usdc : w.paper_balance) ?? 0, pnl: w.net_pnl ?? 0, pnlPct: w.net_pnl_pct ?? 0, trades: w.total_trades ?? 0, wins: w.wins ?? 0, losses: w.losses ?? 0, winRate: w.win_rate_pct ?? 0, tradingMode: w.trading_mode ?? 'paper', paperBalance: w.paper_balance ?? 0, realBalanceUsdc: w.real_balance_usdc ?? 0 };
+}
+
+export async function getFullWallet() {
+  const wallet = getStoredWallet();
+  if (!wallet) return { paperBalance: 0, realBalanceUsdc: 0, tradingMode: 'paper', pnl: 0, trades: 0 };
+  const res = await authFetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
+  if (!res.ok) throw new Error(`Wallet authFetch failed: ${res.status}`);
+  const w = await res.json();
+  return { paperBalance: w.paper_balance ?? 0, realBalanceUsdc: w.real_balance_usdc ?? 0, tradingMode: w.trading_mode ?? 'paper', pnl: w.net_pnl ?? 0, pnlPct: w.net_pnl_pct ?? 0, trades: w.total_trades ?? 0, balance: w.paper_balance ?? 0 };
 }
 
 export async function getTrades() {
   const wallet = getStoredWallet();
   if (!wallet) return [];
-
   const res = await authFetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
   if (!res.ok) throw new Error(`Trades authFetch failed: ${res.status}`);
   const w = await res.json();
-  return (w.trades || []).map(t => ({
-    id: t.id,
-    marketId: t.market_id,
-    q: t.market_question,
-    side: (t.outcome || 'YES').toLowerCase(),
-    shares: t.shares || 0,
-    amount: Math.round((t.total_cost || 0) * 100) / 100,
-    price: t.price_per_share || 0,
-    currentPrice: t.current_price ?? null,
-    currentValue: t.current_value ?? null,
-    unrealizedPnl: t.unrealized_pnl ?? null,
-    status: (t.status || 'OPEN').toLowerCase(),
-    result: t.result || 'OPEN',
-    pnl: t.pnl ?? 0,
-    txHash: t.tx_hash || null,
-  }));
+  return (w.trades || []).map(t => ({ id: t.id, marketId: t.market_id, q: t.market_question, side: (t.outcome || 'YES').toLowerCase(), shares: t.shares || 0, amount: Math.round((t.total_cost || 0) * 100) / 100, price: t.price_per_share || 0, currentPrice: t.current_price ?? null, currentValue: t.current_value ?? null, unrealizedPnl: t.unrealized_pnl ?? null, status: (t.status || 'OPEN').toLowerCase(), result: t.result || 'OPEN', pnl: t.pnl ?? 0, txHash: t.tx_hash || null }));
 }
 
 export async function getPositionValue(tradeId) {
   const res = await authFetch(`${BASE}/api/trade/value/${tradeId}`);
-  if (!res.ok) throw new Error(`Position value authFetch failed: ${res.status}`);
+  if (!res.ok) throw new Error(`Position value failed: ${res.status}`);
   return await res.json();
 }
 
 export async function sellTrade(tradeId) {
-  const res = await authFetch(`${BASE}/api/trade/sell/${tradeId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).detail || ''; } catch { }
-    throw new Error(`Sell failed (${res.status}): ${detail}`);
-  }
+  const res = await authFetch(`${BASE}/api/trade/sell/${tradeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  if (!res.ok) { let d = ''; try { d = (await res.json()).detail || ''; } catch {} throw new Error(`Sell failed (${res.status}): ${d}`); }
   return await res.json();
 }
 
@@ -347,18 +415,14 @@ export async function sellTrade(tradeId) {
 
 export async function getLeaderboard(limit = 50, mode = 'paper') {
   const res = await authFetch(`${BASE}/api/leaderboard?limit=${limit}&mode=${mode}`);
-  if (!res.ok) throw new Error(`Leaderboard authFetch failed: ${res.status}`);
-  const data = await res.json();
-  return data.leaderboard || [];
+  if (!res.ok) throw new Error(`Leaderboard failed: ${res.status}`);
+  return (await res.json()).leaderboard || [];
 }
 
 export async function getMyRank(walletAddress, mode = 'paper') {
   if (!walletAddress) return null;
-  const addr = walletAddress.toLowerCase();
-  const res = await authFetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(addr)}&mode=${mode}`);
-  // 404 = user hasn't traded yet — not an error, just no rank card yet
-  if (res.status === 404) return null;
-  if (!res.ok) return null;
+  const res = await authFetch(`${BASE}/api/leaderboard/me?wallet_address=${encodeURIComponent(walletAddress.toLowerCase())}&mode=${mode}`);
+  if (res.status === 404 || !res.ok) return null;
   return await res.json();
 }
 
@@ -367,29 +431,27 @@ export async function getMyRank(walletAddress, mode = 'paper') {
 export async function getUserStats() {
   const wallet = getStoredWallet();
   if (!wallet) return { xp: 0, level: 1, rank: null, streak: 0, xpToNextLevel: 500, xpProgress: 0, totalTrades: 0, winRate: 0 };
-
   const res = await authFetch(`${BASE}/api/user/stats?wallet_address=${encodeURIComponent(wallet)}`);
-  if (!res.ok) throw new Error(`User stats authFetch failed: ${res.status}`);
+  if (!res.ok) throw new Error(`User stats failed: ${res.status}`);
   return await res.json();
 }
 
 export async function getAchievements() {
   const wallet = getStoredWallet();
   if (!wallet) return [];
-
   const res = await authFetch(`${BASE}/api/user/achievements?wallet_address=${encodeURIComponent(wallet)}`);
-  if (!res.ok) throw new Error(`Achievements authFetch failed: ${res.status}`);
-  const data = await res.json();
-  return data.achievements || [];
+  if (!res.ok) throw new Error(`Achievements failed: ${res.status}`);
+  return (await res.json()).achievements || [];
 }
 
 // ─── GLOBAL CHAT ─────────────────────────────────────────────────────────────
 
 export async function sendChat(message, language = 'en', userId = null) {
   const wallet = userId || getStoredWallet();
-  const res = await fetch(`${BASE}/agent/chat`, {
+  const res = await authFetch(`${BASE}/agent/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    requireAuth: Boolean(wallet),
     body: JSON.stringify({
       message,
       user_id: wallet || null,
@@ -401,15 +463,14 @@ export async function sendChat(message, language = 'en', userId = null) {
   return { reply: data.reply || 'No response received.' };
 }
 
-// ─── PERMISSIONS (Auto-trade) ─────────────────────────────────────────────────
+// ─── PERMISSIONS (Auto-trade settings only; engine execution is backend-disabled) ─
 
 export async function getPermissions() {
   const wallet = getStoredWallet();
   if (!wallet) return null;
-  const res = await fetch(`${BASE}/api/permissions/${encodeURIComponent(wallet)}`);
-  // Auto-create a default permissions row if one doesn't exist yet
+  const res = await authFetch(`${BASE}/api/permissions/${encodeURIComponent(wallet)}`);
   if (res.status === 404) {
-    const createRes = await fetch(`${BASE}/api/permissions`, {
+    const createRes = await authFetch(`${BASE}/api/permissions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ telegram_user_id: wallet }),
@@ -424,46 +485,25 @@ export async function getPermissions() {
 export async function setPermissions(settings) {
   const wallet = getStoredWallet();
   if (!wallet) throw new Error('No wallet connected');
-  const res = await fetch(`${BASE}/api/permissions`, {
+  const res = await authFetch(`${BASE}/api/permissions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // telegram_user_id field stores wallet address for dashboard users
     body: JSON.stringify({ telegram_user_id: wallet, ...settings }),
   });
   if (!res.ok) {
     let detail = '';
-    try { detail = (await res.json()).detail || ''; } catch { }
+    try { detail = (await res.json()).detail || ''; } catch {}
     throw new Error(`Permissions update failed (${res.status}): ${detail}`);
   }
   return await res.json();
 }
 
-// ─── CONFIRM PENDING TRADE ────────────────────────────────────────────────────
-
-export async function confirmTrade(pendingId, action) {
-  const wallet = getStoredWallet();
-  if (!wallet) throw new Error('No wallet connected');
-  const res = await fetch(`${BASE}/api/trade/confirm/${pendingId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ telegram_user_id: wallet, action }),
-  });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).detail || ''; } catch { }
-    throw new Error(`Trade confirm failed (${res.status}): ${detail}`);
-  }
-  return await res.json();
-}
-
-// ─── BRIDGE (Phase 2 — LI.FI Base → Polygon) ────────────────────────────────
+// ─── BRIDGE ──────────────────────────────────────────────────────────────────
 
 export async function getBridgeQuote(amountUsdc) {
   const wallet = getStoredWallet();
   if (!wallet) throw new Error('No wallet connected');
-  const res = await authFetch(
-    `${BASE}/api/bridge/quote?wallet_address=${encodeURIComponent(wallet)}&amount_usdc=${amountUsdc}`
-  );
+  const res = await authFetch(`${BASE}/api/bridge/quote?wallet_address=${encodeURIComponent(wallet)}&amount_usdc=${amountUsdc}`);
   if (!res.ok) throw new Error(`Bridge quote failed: ${res.status}`);
   return await res.json();
 }
@@ -471,15 +511,7 @@ export async function getBridgeQuote(amountUsdc) {
 export async function startBridge(amountUsdc, lifiTxHash) {
   const wallet = getStoredWallet();
   if (!wallet) throw new Error('No wallet connected');
-  const res = await authFetch(`${BASE}/api/bridge/start`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      wallet_address: wallet,
-      amount_usdc: amountUsdc,
-      lifi_tx_hash: lifiTxHash,
-    }),
-  });
+  const res = await authFetch(`${BASE}/api/bridge/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet_address: wallet, amount_usdc: amountUsdc, lifi_tx_hash: lifiTxHash }) });
   if (!res.ok) throw new Error(`Bridge start failed: ${res.status}`);
   return await res.json();
 }
@@ -493,21 +525,16 @@ export async function getBridgeStatus(bridgeId) {
 export async function getBridgeHistory() {
   const wallet = getStoredWallet();
   if (!wallet) return { total: 0, bridges: [] };
-  const res = await authFetch(
-    `${BASE}/api/bridge/history?wallet_address=${encodeURIComponent(wallet)}`
-  );
+  const res = await authFetch(`${BASE}/api/bridge/history?wallet_address=${encodeURIComponent(wallet)}`);
   if (!res.ok) return { total: 0, bridges: [] };
   return await res.json();
 }
 
-// ─── PRETIUM (Phase 3 — On-ramp / Off-ramp via Pretium Africa) ──────────────
+// ─── PRETIUM ─────────────────────────────────────────────────────────────────
 
 export async function getPretiumRate(currency = 'KES') {
   const res = await authFetch(`${BASE}/api/pretium/rate?currency=${currency}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Rate authFetch failed: ${res.status}`);
-  }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Rate failed: ${res.status}`); }
   return await res.json();
 }
 
@@ -523,47 +550,22 @@ export async function createOnramp({ amount, phoneNumber, walletAddress, mobileN
       chain,
       asset,
       fee,
-      // Dashboard users don't have a Telegram ID — use walletAddress as the
-      // identity key so _grant_premium_for_onramp can find the canonical user row.
       telegram_user_id: telegramUserId || walletAddress,
     }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `On-ramp failed: ${res.status}`);
-  }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `On-ramp failed: ${res.status}`); }
   return await res.json();
 }
 
 export async function createOfframp({ amountCrypto, phoneNumber, walletAddress, transactionHash, mobileNetwork = 'Safaricom', chain = 'BASE', asset = 'USDC', fee = 0, telegramUserId = null }) {
-  const res = await authFetch(`${BASE}/api/pretium/offramp`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      amount_crypto: amountCrypto,
-      phone_number: phoneNumber,
-      wallet_address: walletAddress,
-      transaction_hash: transactionHash,
-      mobile_network: mobileNetwork,
-      chain,
-      asset,
-      fee,
-      telegram_user_id: telegramUserId,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Off-ramp failed: ${res.status}`);
-  }
+  const res = await authFetch(`${BASE}/api/pretium/offramp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount_crypto: amountCrypto, phone_number: phoneNumber, wallet_address: walletAddress, transaction_hash: transactionHash, mobile_network: mobileNetwork, chain, asset, fee, telegram_user_id: telegramUserId }) });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Off-ramp failed: ${res.status}`); }
   return await res.json();
 }
 
 export async function getPretiumTransaction(transactionId) {
   const res = await authFetch(`${BASE}/api/pretium/transaction/${transactionId}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Transaction authFetch failed: ${res.status}`);
-  }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Transaction failed: ${res.status}`); }
   return await res.json();
 }
 
@@ -579,61 +581,28 @@ export async function getPretiumTransactions(type = null, limit = 20) {
 
 export async function getPretiumSettlementAddress(chain = 'BASE') {
   const res = await authFetch(`${BASE}/api/pretium/settlement-address?chain=${chain}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Settlement address authFetch failed: ${res.status}`);
-  }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Settlement address failed: ${res.status}`); }
   return await res.json();
 }
 
-// ─── REAL BALANCE ─────────────────────────────────────────────────────────────
+// ─── x402 ────────────────────────────────────────────────────────────────────
 
-export async function getFullWallet() {
-  const wallet = getStoredWallet();
-  if (!wallet) return { paperBalance: 0, realBalanceUsdc: 0, tradingMode: 'paper', pnl: 0, trades: 0 };
-
-  const res = await authFetch(`${BASE}/api/wallet/summary?wallet_address=${encodeURIComponent(wallet)}`);
-  if (!res.ok) throw new Error(`Wallet authFetch failed: ${res.status}`);
-  const w = await res.json();
-  return {
-    paperBalance: w.paper_balance ?? 0,
-    realBalanceUsdc: w.real_balance_usdc ?? 0,
-    tradingMode: w.trading_mode ?? 'paper',
-    pnl: w.net_pnl ?? 0,
-    pnlPct: w.net_pnl_pct ?? 0,
-    trades: w.total_trades ?? 0,
-    // keep legacy shape too
-    balance: w.paper_balance ?? 0,
-  };
-}
-
-// ─── CHAT HISTORY ─────────────────────────────────────────────────────────────
-
-export async function getChatHistory(marketId) {
-  const wallet = getStoredWallet();
-  if (!wallet || !marketId) return [];
-  const res = await fetch(
-    `${BASE}/agent/advice/history/${encodeURIComponent(marketId)}?wallet_address=${encodeURIComponent(wallet)}&t=${Date.now()}`
-  );
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (data.messages || []).map((m, i) => ({
-    id: `history-${i}`,
-    role: m.role === 'assistant' ? 'ai' : 'user',
-    text: m.content,
-    advice: m.advice,
-  }));
+export async function getUpgradePaymentDetails() {
+  const res = await authFetch(`${BASE}/x402/payment-info`, { requireAuth: false });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Payment info failed: ${res.status}`);
+  }
+  return await res.json();
 }
 
 export async function verifyPayment(proof, marketId) {
   const wallet = getStoredWallet();
   if (!proof || proof.length < 4) return { valid: false, error: 'Invalid proof' };
-  if (!wallet) return { valid: false, error: 'No wallet connected' };
+  if (!wallet)   return { valid: false, error: 'No wallet connected' };
 
-  // Global profile upgrade — no market_id needed
   const isGlobal = !marketId || marketId === '__global__';
   const endpoint = isGlobal ? `${BASE}/x402/upgrade` : `${BASE}/x402/verify`;
-
   const body = isGlobal
     ? { proof, wallet_address: wallet }
     : { proof, wallet_address: wallet, market_id: String(marketId) };
@@ -643,23 +612,7 @@ export async function verifyPayment(proof, marketId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-
   const data = await res.json();
-  // Backend returns { verified, reason } — normalise to { valid, error } for the UI
-  const ok = res.ok && (data.verified === true);
-  if (!ok) {
-    return { valid: false, error: data.reason || data.detail || 'Verification failed' };
-  }
-
+  if (!res.ok || !data.verified) return { valid: false, error: data.reason || data.detail || 'Verification failed' };
   return { valid: true, receipt: data.tx_hash || proof, details: data };
-}
-
-/**
- * getUpgradePaymentDetails — fetch treasury address, USDC contract, and price
- * from the backend so the frontend never hard-codes them.
- */
-export async function getUpgradePaymentDetails() {
-  const res = await fetch(`${BASE}/x402/payment-info`);
-  if (!res.ok) throw new Error(`Failed to fetch payment info: ${res.status}`);
-  return await res.json();
 }

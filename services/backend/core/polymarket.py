@@ -347,3 +347,108 @@ def _parse_market_item(
 
 # Keep old name as alias so any other code that imports it still works
 parse_market = _parse_market_item
+
+
+# ─── market-p: PRICE HISTORY ─────────────────────────────────────────────────
+# Fetches historical YES price data for a market from Polymarket's CLOB API.
+# Flow: condition_id → token_id (via Gamma API) → price history (via CLOB API)
+# The CLOB API uses token_id (clobTokenIds[0]) not the condition ID stored in our DB.
+
+CLOB_API = "https://clob.polymarket.com"
+
+# market-p2: Fidelity = minutes between each data point.
+# Lower = more granular (more points) but less reliable on Render's slow outbound.
+# These values are tuned to return ~150-180 points per interval reliably.
+_FIDELITY_MAP = {
+    "1d":  10,   # every 10 min  → ~144 points
+    "1w":  60,   # every 1 hour  → ~168 points
+    "1m":  240,  # every 4 hours → ~180 points
+    "6m":  720,  # every 12 hours → ~180 points
+    "1y":  1440, # every 24 hours → ~365 points
+    "all": 1440,
+}
+# market-p2: Fallback fidelity if primary call returns empty.
+# 720 (12hr) is known to be the most reliable granularity on Polymarket's CLOB.
+_FIDELITY_FALLBACK = 720
+
+
+def _fetch_clob_prices(yes_token_id: str, interval: str, fidelity: int) -> list:
+    """
+    market-p2: Inner helper — calls CLOB /prices-history for a given token + fidelity.
+    Returns raw history list or [] on any failure.
+    """
+    try:
+        with httpx.Client(timeout=20.0) as client:  # market-p2: raised from 10s for Render cold starts
+            clob_res = client.get(
+                f"{CLOB_API}/prices-history",
+                params={
+                    "market":   yes_token_id,
+                    "interval": interval,
+                    "fidelity": fidelity,
+                }
+            )
+            clob_res.raise_for_status()
+            return clob_res.json().get("history", [])
+    except Exception as e:
+        print(f"[market-p2] CLOB fetch failed (token={yes_token_id}, fidelity={fidelity}): {e}")
+        return []
+
+
+def fetch_price_history(market_id: str, interval: str = "1w", fidelity: int = None) -> list:
+    """
+    market-p: Given a Polymarket condition ID (what we store as market.id),
+    resolve the YES token_id then return price history as a list of floats (0-100).
+    Returns empty list if anything fails — frontend falls back to placeholder.
+    market-p2: fidelity now defaults to None — picked automatically from _FIDELITY_MAP
+    per interval, with a 720-min fallback retry if the primary call returns empty.
+    """
+    try:
+        # market-p3: resolve token_id from Gamma ID directly to avoid categorical market collisions
+        with httpx.Client(timeout=20.0) as client:
+            gamma_res = client.get(f"{GAMMA_API}/markets/{market_id}")
+            gamma_res.raise_for_status()
+            raw = gamma_res.json()
+
+        if not raw:
+            print(f"[market-p] No Gamma market found for ID: {market_id}")
+            return []
+
+        # market-p: clobTokenIds is a JSON string like '["0xabc...", "0xdef..."]'
+        # Index 0 = YES token, index 1 = NO token
+        clob_token_ids_raw = raw.get("clobTokenIds", "[]")
+        if isinstance(clob_token_ids_raw, str):
+            clob_token_ids = json.loads(clob_token_ids_raw)
+        else:
+            clob_token_ids = clob_token_ids_raw
+
+        if not clob_token_ids:
+            print(f"[market-p] No clobTokenIds for market: {market_id}")
+            return []
+
+        yes_token_id = clob_token_ids[0]  # market-p: YES token is always index 0
+
+        # market-p2: Pick fidelity from map if not explicitly passed
+        chosen_fidelity = fidelity if fidelity is not None else _FIDELITY_MAP.get(interval, 60)
+
+        # market-p: Step 2 — fetch price history from CLOB API using YES token_id
+        history = _fetch_clob_prices(yes_token_id, interval, chosen_fidelity)
+
+        # market-p2: If primary call returns empty and fidelity was granular, retry at fallback
+        if not history and chosen_fidelity < _FIDELITY_FALLBACK:
+            print(f"[market-p2] Empty at fidelity={chosen_fidelity}, retrying at {_FIDELITY_FALLBACK} for token: {yes_token_id}")
+            history = _fetch_clob_prices(yes_token_id, interval, _FIDELITY_FALLBACK)
+
+        # market-p: Response shape: { "history": [{ "t": timestamp, "p": price }, ...] }
+        if not history:
+            print(f"[market-p] Empty price history for token: {yes_token_id}")
+            return []
+
+        # market-p: Convert decimal prices (0.0-1.0) to cents (0-100) for the chart
+        prices = [round(float(point["p"]) * 100, 1) for point in history if "p" in point]
+        print(f"[market-p] Got {len(prices)} price points for market {market_id}")
+        return prices
+
+    except Exception as e:
+        print(f"[market-p] fetch_price_history failed for {market_id}: {e}")
+        return []
+# ─── end market-p ─────────────────────────────────────────────────────────────

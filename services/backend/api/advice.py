@@ -26,7 +26,7 @@ from services.backend.core.policies import check_policy
 from services.backend.core.x402_verifier import has_premium_access, has_any_confirmed_payment, payment_required_payload
 from services.backend.data.database import engine
 from services.backend.data.models import Market, AISignal, AuditLog, Conversation
-from services.backend.api.auth import get_current_user
+from services.backend.api.auth import get_optional_user
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -120,7 +120,7 @@ async def search_prefetch(market_question: str) -> dict:
 @router.get("/usage")
 async def get_advice_usage(
     wallet_address: str = "",
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_optional_user),
 ):
     """
     Returns how many free advice calls the user has made today
@@ -593,7 +593,7 @@ def save_conversation_turn(
 async def get_advice(
     request: Request,
     body_req: AdviceRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_optional_user),
 ):
     tool_calls_used: list[str] = []
     start_time = time.monotonic()

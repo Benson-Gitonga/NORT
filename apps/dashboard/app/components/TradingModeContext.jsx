@@ -1,7 +1,7 @@
 'use client';
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { BASE } from '@/lib/api';
+import { BASE, authFetch } from '@/lib/api';
 
 const TradingModeContext = createContext({
   mode: 'paper',
@@ -22,7 +22,7 @@ export function TradingModeProvider({ children }) {
   const refresh = useCallback(async () => {
     if (!walletAddress) return;
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${BASE}/api/wallet/mode?wallet_address=${encodeURIComponent(walletAddress)}`
       );
       if (!res.ok) return;
@@ -45,7 +45,7 @@ export function TradingModeProvider({ children }) {
   // Switch mode — calls backend, enforces all gates server-side
   const setMode = useCallback(async (newMode, confirmed = false) => {
     if (!walletAddress) throw new Error('No wallet connected');
-    const res = await fetch(`${BASE}/api/wallet/mode`, {
+    const res = await authFetch(`${BASE}/api/wallet/mode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

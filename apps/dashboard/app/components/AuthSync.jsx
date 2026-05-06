@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { BASE } from "@/lib/api";
+import { BASE, authFetch } from "@/lib/api";
 
 export default function AuthSync() {
   const { isAuthed, walletAddress } = useAuth();
@@ -18,7 +18,7 @@ export default function AuthSync() {
     // Step 1: Register/ensure the wallet exists in the DB (idempotent).
     // Do NOT send telegram_id — the UNIQUE constraint causes errors for
     // returning users. The wallet_address is the primary key for dashboard users.
-    fetch(`${BASE}/api/wallet/connect`, {
+    authFetch(`${BASE}/api/wallet/connect`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wallet_address: walletAddress.toLowerCase() }),
@@ -49,7 +49,7 @@ export default function AuthSync() {
     if (!username.trim() || !walletAddress) return;
     setSaving(true);
     try {
-      await fetch(`${BASE}/api/wallet/connect`, {
+      await authFetch(`${BASE}/api/wallet/connect`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,132 +1,151 @@
-"""
-auth.py — Privy JWT verification for NORT backend.
-
-Privy issues signed JWT access tokens. We verify them locally using the
-Privy public JWK set (cached in memory) rather than making a network call
-on every request. This is ~10x faster and does not require a Privy API call.
-
-Flow:
-  1. Frontend calls getAccessToken() from @privy-io/react-auth
-  2. Sends as "Authorization: Bearer <jwt>" header
-  3. We verify the JWT signature against Privy's JWKS endpoint
-  4. Extract wallet address from linked_accounts claim
-
-Falls back to {"wallet": None} on any failure so all endpoints degrade
-gracefully and can use telegram_id / wallet_address from the request body.
-"""
-
+import logging
 import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import httpx
-import time
-from fastapi import Header
-from typing import Dict, Any, Optional
+from fastapi import HTTPException, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 PRIVY_APP_ID = os.getenv("PRIVY_APP_ID", "").strip()
+logger = logging.getLogger(__name__)
 
-# ── JWKS cache ──────────────────────────────────────────────────────────────
-# Privy's public keys rotate rarely. Cache for 24h to avoid hammering JWKS.
-_jwks_cache: dict = {"keys": None, "fetched_at": 0}
-_JWKS_TTL = 86400  # 24 hours
+bearer_scheme = HTTPBearer(auto_error=False)
 
-async def _get_privy_jwks() -> list:
-    now = time.time()
-    if _jwks_cache["keys"] and (now - _jwks_cache["fetched_at"]) < _JWKS_TTL:
-        return _jwks_cache["keys"]
+# Cache valid tokens in memory to prevent rate-limiting against auth.privy.io
+_token_cache: Dict[str, dict] = {}
+
+
+def _extract_wallet_address(data: Dict[str, Any]) -> Optional[str]:
+    wallet_obj = data.get("wallet")
+    if isinstance(wallet_obj, dict) and wallet_obj.get("address"):
+        return wallet_obj["address"]
+
+    linked_accounts = data.get("linked_accounts") or []
+    for account in linked_accounts:
+        if account.get("type") in ("wallet", "smart_wallet") and account.get("address"):
+            return account["address"]
+    return None
+
+
+def _extract_wallet_addresses(data: Dict[str, Any]) -> List[str]:
+    wallets: List[str] = []
+
+    wallet_obj = data.get("wallet")
+    if isinstance(wallet_obj, dict) and wallet_obj.get("address"):
+        wallets.append(str(wallet_obj["address"]).lower())
+
+    linked_accounts = data.get("linked_accounts") or []
+    for account in linked_accounts:
+        if account.get("type") in ("wallet", "smart_wallet") and account.get("address"):
+            wallets.append(str(account["address"]).lower())
+
+    # Preserve order but dedupe
+    return list(dict.fromkeys(wallets))
+
+
+async def _verify_with_privy(token: str) -> Dict[str, Any]:
+    if not PRIVY_APP_ID:
+        logger.error("[Auth] PRIVY_APP_ID is not configured on the backend.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="PRIVY_APP_ID is not configured.",
+        )
+
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(
-                f"https://auth.privy.io/api/v1/apps/{PRIVY_APP_ID}/jwks.json",
-                headers={"privy-app-id": PRIVY_APP_ID},
-            )
-            if r.status_code == 200:
-                keys = r.json().get("keys", [])
-                _jwks_cache["keys"] = keys
-                _jwks_cache["fetched_at"] = now
-                return keys
-    except Exception as e:
-        print(f"[Auth] JWKS fetch failed: {e}")
-    return _jwks_cache.get("keys") or []
-
-async def get_current_user(
-    authorization: Optional[str] = Header(default=None),
-) -> Dict[str, Any]:
-    """
-    Verify a Privy Bearer JWT and return the user dict with a 'wallet' key.
-    Returns {"wallet": None} on any failure — endpoints use body fields as fallback.
-    """
-    if not authorization:
-        return {"wallet": None}
-
-    token = authorization.removeprefix("Bearer ").strip()
-    if not token:
-        return {"wallet": None}
-
-    # Dev mock bypass — only active when NEXT_PUBLIC_USE_MOCK_AUTH=true
-    if os.getenv("NEXT_PUBLIC_USE_MOCK_AUTH", "false").lower() == "true":
-        return {"wallet": "dev_user"}
-
-    # ── Try local JWT verification first (fast, no network) ─────────────────
-    try:
-        import jwt as pyjwt
-        jwks = await _get_privy_jwks()
-        if jwks:
-            from jwt import PyJWKClient, PyJWKSet
-            jwk_set = PyJWKSet.from_dict({"keys": jwks})
-            # Find signing key — try each key until one works
-            for jwk in jwks:
-                try:
-                    key_obj = pyjwt.algorithms.RSAAlgorithm.from_jwk(jwk)
-                    payload = pyjwt.decode(
-                        token,
-                        key_obj,
-                        algorithms=["RS256"],
-                        audience=PRIVY_APP_ID,
-                        options={"verify_exp": True},
-                    )
-                    wallet = _extract_wallet_from_payload(payload)
-                    payload["wallet"] = wallet
-                    return payload
-                except Exception:
-                    continue
-    except ImportError:
-        pass  # PyJWT not installed — fall through to network verification
-    except Exception as e:
-        print(f"[Auth] JWT verify error: {e}")
-
-    # ── Fallback: verify via Privy network call (slower but always works) ────
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            response = await client.get(
                 "https://auth.privy.io/api/v1/users/me",
                 headers={
                     "Authorization": f"Bearer {token}",
                     "privy-app-id": PRIVY_APP_ID,
+                    "Accept": "application/json",
                 },
             )
-        if r.status_code != 200:
-            return {"wallet": None}
-        data = r.json()
-        data["wallet"] = _extract_wallet_from_payload(data)
-        return data
-    except Exception:
-        return {"wallet": None}
+    except httpx.RequestError as exc:
+        logger.error(f"[Auth] Could not reach Privy /users/me: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Auth provider unavailable.",
+        )
+
+    if response.status_code != 200:
+        preview = (response.text or "")[:200]
+        logger.warning(f"[Auth] Privy rejected token: {response.status_code} {preview}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+        )
+
+    return response.json()
 
 
-def _extract_wallet_from_payload(data: dict) -> Optional[str]:
-    """Pull the wallet address out of either a JWT payload or Privy user dict."""
-    # Embedded wallet field (some Privy JWT shapes)
-    if "wallet" in data and isinstance(data["wallet"], dict):
-        addr = data["wallet"].get("address")
-        if addr:
-            return addr.lower()
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+) -> Dict[str, Any]:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header.",
+        )
+    if credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization scheme must be Bearer.",
+        )
 
-    # linked_accounts array (Privy user object shape)
-    for account in data.get("linked_accounts", []):
-        if account.get("type") in ("wallet", "smart_wallet"):
-            addr = account.get("address")
-            if addr:
-                return addr.lower()
+    token = (credentials.credentials or "").strip()
+    if not token or token in {"null", "undefined"}:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token.",
+        )
 
-    # sub claim is the Privy user ID — not a wallet, but better than None
-    # Return None — callers will fall back to request body telegram_id
-    return None
+    # If using mock auth and enabled in env, bypass verified
+    if os.getenv("NEXT_PUBLIC_USE_MOCK_AUTH", "false").lower() == "true":
+        return {"wallet": "dev_user"}
+
+    now = datetime.utcnow().timestamp()
+    cached = _token_cache.get(token)
+    if cached and now < cached["expires_at"]:
+        return cached["data"]
+
+    data = await _verify_with_privy(token)
+    wallets = _extract_wallet_addresses(data)
+    wallet = _extract_wallet_address(data)
+    if not wallet:
+        header_wallet = (request.headers.get("x-wallet-address") or "").strip().lower()
+        if header_wallet and header_wallet not in {"null", "undefined"}:
+            wallet = header_wallet
+            wallets = list(dict.fromkeys([header_wallet, *wallets]))
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Privy user has no wallet address.",
+            )
+
+    data["wallet"] = wallet.lower()
+    data["wallets"] = wallets or [wallet.lower()]
+    _token_cache[token] = {
+        "data": data,
+        "expires_at": now + 900,  # 15 minutes
+    }
+    return data
+
+
+async def get_optional_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+) -> Dict[str, Any]:
+    """
+    Optional auth for public AI endpoints.
+
+    Protected wallet/profile routes should use get_current_user. Chat/advice can
+    accept unauthenticated free or Telegram/internal requests, but premium
+    authorization still requires a verified wallet in the returned dict.
+    """
+    try:
+        return await get_current_user(request, credentials)
+    except HTTPException:
+        return {"wallet": None, "wallets": []}

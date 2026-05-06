@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 import re
 from services.backend.core.policies import check_policy
-from services.backend.api.auth import get_current_user
+from services.backend.api.auth import get_optional_user
 from services.backend.data.database import engine
 from services.backend.data.models import Conversation, AuditLog, User
 
@@ -310,7 +310,7 @@ async def _call_llm(messages: list, premium: bool = False) -> str:
 # ─── Endpoint ─────────────────────────────────────────────────────────────────
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
+async def chat(request: ChatRequest, current_user: dict = Depends(get_optional_user)):
     """
     General-purpose conversational AI endpoint.
     Accepts a free-text message and returns a reply.

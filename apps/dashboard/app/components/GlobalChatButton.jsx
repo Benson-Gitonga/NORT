@@ -17,6 +17,13 @@ export default function GlobalChatButton() {
   const isPremium = tier === 'premium';
 
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener('open-nortbot', handler);
+    return () => window.removeEventListener('open-nortbot', handler);
+  }, []);
+
   const [messages, setMessages] = useState([INIT_MSG]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);

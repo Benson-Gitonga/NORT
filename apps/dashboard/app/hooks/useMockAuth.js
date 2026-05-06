@@ -10,6 +10,7 @@ const MOCK_USER = {
 export function useMockAuth() {
   const [isAuthed, setIsAuthed] = useState(false);
   const [ready, setReady] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -28,10 +29,12 @@ export function useMockAuth() {
   }, []);
 
   const logout = useCallback(() => {
+    setIsLoggingOut(true);
     setIsAuthed(false);
     if (typeof window !== "undefined") {
       localStorage.removeItem("nort_auth");
     }
+    window.location.href = "/";
   }, []);
 
   return {
@@ -41,5 +44,6 @@ export function useMockAuth() {
     walletAddress: isAuthed ? MOCK_USER.wallet.address : null,
     login,
     logout,
+    isLoggingOut,
   };
 }
